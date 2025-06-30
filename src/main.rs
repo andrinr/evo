@@ -1,7 +1,9 @@
 use macroquad::prelude::*;
+use ndarray::{Array2, Array1};
+
 struct MLP {
-    weights: Vec<Vec<f32>>,
-    biases: Vec<f32>,
+    weights: Array2<f32>,
+    biases: Array1<f32>,
 }
 
 struct Brain {
@@ -11,13 +13,27 @@ struct Brain {
 }
 
 struct Organism {
-    pos: Vec2,
-    vel: Vec2,
+    pos: Array1<f32>,
+    vel: Array1<f32>,
     rot: f32,
     energy: f32,
     signal: Vec3,
     memory: Vec<f32>,
     brain: Brain,
+}
+
+fn think(brain : &Brain, inputs: Vec<f32>) -> Vec<f32> {
+
+    let mut output = vec![0.0; brain.output.weights.len()];
+    
+    for (i, weights) in brain.output.weights.iter().enumerate() {
+        output[i] = weights.iter().zip(&inputs).map(|(w, i)| w * i).sum::<f32>() + brain.output.biases[i];
+    }
+    
+    // Apply activation function (e.g., ReLU)
+    output.iter_mut().for_each(|x| *x = x.max(0.0));
+
+    output
 }
 
 fn wrap_around(v: &Vec2) -> Vec2 {

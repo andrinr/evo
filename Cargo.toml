@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 macroquad = "0.4"
+ndarray = "0.16.0"
