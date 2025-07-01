@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 macroquad = "0.4"
 ndarray = "0.16.0"
+ndarray-rand = "0.15.0"
+kdtree = "0.7.0"
+geo = "0.30.0"
+rand = "0.9.1"
