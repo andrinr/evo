@@ -1,4 +1,4 @@
-use ndarray::{Array1};
+use ndarray::{Array1, Array2};
 use ndarray_rand::{RandomExt};
 use ndarray_rand::rand_distr::Uniform;
 
@@ -7,6 +7,7 @@ use crate::brain;
 #[derive(Debug, Clone)]
 pub struct Organism {
     pub id : usize,
+    pub age: f32,
     pub pos: Array1<f32>,
     pub vel: Array1<f32>,
     pub rot: f32,
@@ -25,8 +26,10 @@ pub fn init_random_organism(
     hidden_size: usize,
     num_vision_directions: usize,
 ) -> Organism {
+
     Organism {
         id: i,
+        age: 0.0,
         pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
         vel: Array1::random(2, Uniform::new(-init_velocity, init_velocity)),
         // random rotation in radians
@@ -40,26 +43,24 @@ pub fn init_random_organism(
             memory_size
         ),
         brain: brain::Brain {
-            embedd: brain::init_mlp(
-                (signal_size + 1) * num_vision_directions + memory_size + 1, // inputs: signal + vision vectors + memory + energy
-                hidden_size,
-                0.1
-            ),
-            hidden: brain::init_mlp(
-                hidden_size,
-                hidden_size,
-                0.1
-            ),
-            output: brain::init_mlp(
-                hidden_size,
-                signal_size + memory_size + 1, // outputs: signal + memory + rotation + acceleration
-                0.1
-            ),
+            layers: vec![
+                brain::init_mlp(
+                    signal_size + 1, // +1 for the rotation input
+                    hidden_size,
+                    0.1
+                ),
+                brain::init_mlp(
+                    hidden_size,
+                    num_vision_directions * 2, // output size for vision vectors
+                    0.1
+                ),
+            ],
         },
     }
 }
 
 
+   
 pub fn get_vision_vectors(
         organism: &Organism,
         field_of_view: f32,

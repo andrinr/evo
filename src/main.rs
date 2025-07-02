@@ -18,7 +18,9 @@ const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radia
 
 const SIGNAL_SIZE: usize = 3; // size of the signal array
 const MEMORY_SIZE: usize = 3; // size of the memory array
-const HIDDEN_SIZE: usize = 4; // size of the hidden layer in the MLP
+const brain_layers: usize = 2; // number of layers in the brain
+// usize tuple
+const embedding_sizes: (usize, usize) = (SIGNAL_SIZE + 1, 5); // input size for the embedding layer
 
 const N_ORGANISMS: usize = 100;
 
