@@ -1,6 +1,6 @@
 use geo::Distance;
 use macroquad::prelude::*;
-use ndarray::{Array2, Array1};
+use ndarray::{Array2, Array1, s};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 use ndarray_rand::rand;
@@ -198,7 +198,7 @@ async fn main() {
                             ),
                             output: init_mlp(
                                 HIDDEN_SIZE,
-                                SIGNAL_SIZE + MEMORY_SIZE + 1, // outputs: signal + memory + energy
+                                SIGNAL_SIZE + MEMORY_SIZE + 1, // outputs: signal + memory + rotation + acceleration
                                 0.1
                             ),
                         },
@@ -278,14 +278,18 @@ async fn main() {
             brain_inputs[(NUM_VISION_DIRECTIONS * 2) + 2] = organism.memory[1]; // memory 2
             brain_inputs[(NUM_VISION_DIRECTIONS * 2) + 3] = organism.memory[2]; // memory 3
 
-            println!("Organism {} inputs: {:?}", organism.id, brain_inputs);
-
             let brain_outputs = think(&organism.brain, brain_inputs);
 
-            // organism.signal = brain_outputs.slice(s![..SIGNAL_SIZE]).to_owned();
-            // organism.memory = brain_outputs.slice(s![SIGNAL_SIZE..SIGNAL_SIZE + MEMORY_SIZE]).to_owned();
-            // organism.rot = brain_outputs[brain_outputs.len() - 1]; // last output is rotation
-            
+            organism.signal = brain_outputs.slice(s![..SIGNAL_SIZE]).to_owned();
+            organism.memory = brain_outputs.slice(s![SIGNAL_SIZE..SIGNAL_SIZE + MEMORY_SIZE]).to_owned();
+            organism.rot += brain_outputs[brain_outputs.len() - 2]; // rotation adjustment
+
+            let acc = brain_outputs[brain_outputs.len() - 1]; // acceleration
+            let acc_vector = Array1::from_vec(vec![
+                acc * organism.rot.cos(),
+                acc * organism.rot.sin(),
+            ]);
+            organism.vel += &(&acc_vector * get_frame_time()); // update velocity
 
             // organism body, simple circle
             draw_circle(
@@ -298,7 +302,6 @@ async fn main() {
                     (organism.signal[2] * 255.0) as u8, 
                     255)
             );
-              
 
             for vision_vector in vision_vectors.iter() {
                 let end_point = &organism.pos + vision_vector;
