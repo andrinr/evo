@@ -7,6 +7,7 @@ use geo::{Line, Euclidean, Point};
 
 mod brain;
 mod organism;
+mod food;
 
 const BODY_RADIUS: f32 = 4.0;
 const VISION_RADIUS: f32 = 40.0;
@@ -21,6 +22,7 @@ const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radia
 const SIGNAL_SIZE: usize = 3; // size of the signal array
 const MEMORY_SIZE: usize = 3; // size of the memory array
 const N_ORGANISMS: usize = 100;
+const N_FOOD: usize = 50;
 
 
 fn line_circle_distance(
@@ -56,8 +58,10 @@ fn wrap_around(v: &Array1<f32>) -> Array1<f32> {
 async fn main() {
 
     let mut organisms = Vec::new();
+    let mut food = Vec::new();
 
-    let mut kdtree = KdTree::new(2);
+    let mut kd_tree_orgs = KdTree::new(2);
+    let mut kd_tree_food = KdTree::new(2);
 
     let mut genesis = true;
 
@@ -107,13 +111,24 @@ async fn main() {
                         layer_sizes.clone()
                     );
 
-                    kdtree.add(
+                    kd_tree_orgs.add(
                         entity.pos.to_vec(),
                         i as usize,
                     ).unwrap();
 
                     organisms.push(entity);
 
+                }
+
+                for i in 0..N_FOOD {
+                    let food_item = food::init_random_food(i, &screen_center);
+
+                    kd_tree_food.add(
+                        food_item.pos.to_vec(),
+                        i as usize,
+                    ).unwrap();
+
+                    food.push(food_item);
                 }
             }
             next_frame().await;
@@ -124,8 +139,6 @@ async fn main() {
 
         // Clone the organisms vector
         let new_organisms = organisms.clone();
-
-        let mut keep_organisms = Vec::new();
 
         for (organism_id, entity) in organisms.iter_mut().enumerate() {
 
@@ -145,27 +158,41 @@ async fn main() {
             entity.energy -= ENERGY_CONSUMPTION * get_frame_time(); // energy consumption
 
             // get nearest neighbors
-            let neighbors = kdtree.within(
+            let neighbors_orgs = kd_tree_orgs.within(
+                &entity.pos.to_vec(),
+                VISION_RADIUS,
+                &squared_euclidean,
+            );
+
+            let neighbor_foods = kd_tree_food.within(
                 &entity.pos.to_vec(),
                 VISION_RADIUS,
                 &squared_euclidean,
             );
 
             // the above returns a Result, so we need to handle the error
-            let neighbors = match neighbors {
+            let neighbors_orgs = match neighbors_orgs {
                 Ok(neighbors) => neighbors,
                 Err(e) => {
                     panic!("Error finding neighbors: {:?}", e);
                 }
             };
 
-            let mut brain_inputs = Array1::zeros((SIGNAL_SIZE + 1) * NUM_VISION_DIRECTIONS + MEMORY_SIZE + 1);
+            let neighbor_foods = match neighbor_foods {
+                Ok(neighbors) => neighbors,
+                Err(e) => {
+                    panic!("Error finding food neighbors: {:?}", e);
+                }
+            };
 
+            // collect all the signals from neighbor organisms and food
+            let mut brain_inputs = Array1::zeros((SIGNAL_SIZE + 1) * NUM_VISION_DIRECTIONS + MEMORY_SIZE + 1);
             for (i ,vision_vector) in vision_vectors.iter().enumerate() {
                 let end_point = &entity.pos + vision_vector;
                 let mut min_distance = f32::MAX;
-            
-                for (_, neighbor_id) in neighbors.iter() {
+                
+                // detect neighbor organisms within the vision vector
+                for (_, neighbor_id) in neighbors_orgs.iter() {
                     let neighbor_org = &new_organisms[**neighbor_id];
                     let distance = line_circle_distance(
                         &entity.pos,
@@ -178,6 +205,23 @@ async fn main() {
                         brain_inputs[(i * 2) + 1] = neighbor_org.signal[1];
                         brain_inputs[(i * 2) + 2] = neighbor_org.signal[2];
                         brain_inputs[(i * 2) + 3] = distance;
+                    }
+                }
+
+                // detect neighbor food within the vision vector
+                for (_, food_id) in neighbor_foods.iter() {
+                    let food_item = &food[**food_id];
+                    let distance = line_circle_distance(
+                        &entity.pos,
+                        &end_point,
+                        &food_item.pos
+                    );
+                    if distance < min_distance {
+                        min_distance = distance;
+                        brain_inputs[(i * 2) + 0] = 0.0; // signal for food
+                        brain_inputs[(i * 2) + 1] = 1.0; // no signal for food
+                        brain_inputs[(i * 2) + 2] = 0.0; // no signal for food
+                        brain_inputs[(i * 2) + 3] = distance; // distance to food
                     }
                 }
             }
@@ -195,6 +239,9 @@ async fn main() {
             entity.memory = brain_outputs.slice(s![SIGNAL_SIZE..SIGNAL_SIZE + MEMORY_SIZE]).to_owned();
             entity.rot += brain_outputs[brain_outputs.len() - 2]; // rotation adjustment
 
+            // update age
+            entity.age += get_frame_time();
+
             let acc = brain_outputs[brain_outputs.len() - 1]; // acceleration
             let acc_vector = Array1::from_vec(vec![
                 acc * entity.rot.cos(),
@@ -204,7 +251,34 @@ async fn main() {
             entity.energy -= acc.abs() * get_frame_time() * ACCELERATION_CONSUMPTION; // energy consumption for acceleration
             entity.energy -= entity.rot.abs() * get_frame_time() * ROTATION_CONSUMPTION; // energy consumption for rotation
             entity.energy -= ENERGY_CONSUMPTION * get_frame_time(); // additional energy consumption
+
+            // handle food consumption
+            let food_neighbors = kd_tree_food.within(
+                &entity.pos.to_vec(),
+                BODY_RADIUS * 2.0,
+                &squared_euclidean,
+            );
+
+            let food_neighbors = match food_neighbors {
+                Ok(neighbors) => neighbors,
+                Err(e) => {
+                    panic!("Error finding food neighbors: {:?}", e);
+                }
+            };
             
+            // consume all food within BODY_RADIUS
+            for (_, food_id) in food_neighbors.iter() {
+                let food_item = &mut food[**food_id];
+                if food_item.energy > 0.0 {
+                    entity.energy += food_item.energy; // consume the food
+                    // cap energy to a maximum value
+                    entity.energy = entity.energy.min(1.0);
+                    food_item.energy = 0.0; // remove the food
+
+                    println!("Organism {} consumed food at {:?}", entity.id, food_item.pos);
+                }
+            }
+
             // println!("Organism {}: pos = {:?}, vel = {:?}, energy = {}, signal = {:?}", 
             //     entity.id, 
             //     entity.pos, 
@@ -212,21 +286,6 @@ async fn main() {
             //     entity.energy, 
             //     entity.signal
             // );
-            if entity.energy > 0.0 {
-                keep_organisms.push(organism_id);
-            }   
-            else {
-                // remove the organism from the kdtree
-                let res = kdtree.remove(&entity.pos.to_vec(), &organism_id);
-
-                if res.is_err() {
-                    println!("Error removing organism {}: {:?}", entity.id, res);
-                }
-
-                continue; // skip drawing this organism
-                    
-            }
-    
 
             // organism body, simple circle
             draw_circle(
@@ -260,21 +319,21 @@ async fn main() {
                 Color::from_rgba(0, 255, 0, 200)
             );
 
-            // organism memory, simple rectangles
-            let memory_bar_width = 20.0;
-            let memory_bar_height = 3.0;
-            let memory_bar_x = entity.pos[0] - memory_bar_width / 2.0;
-            let memory_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - memory_bar_height - 2.0;
-            for (i, &value) in entity.memory.iter().enumerate() {
-                let color_value = (value * 255.0) as u8;
-                draw_rectangle(
-                    memory_bar_x + i as f32 * (memory_bar_width / MEMORY_SIZE as f32),
-                    memory_bar_y,
-                    memory_bar_width / MEMORY_SIZE as f32,
-                    memory_bar_height,
-                    Color::from_rgba(color_value, color_value, color_value, 200)
-                );
-            }
+            // // organism memory, simple rectangles
+            // let memory_bar_width = 20.0;
+            // let memory_bar_height = 3.0;
+            // let memory_bar_x = entity.pos[0] - memory_bar_width / 2.0;
+            // let memory_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - memory_bar_height - 2.0;
+            // for (i, &value) in entity.memory.iter().enumerate() {
+            //     let color_value = (value * 255.0) as u8;
+            //     draw_rectangle(
+            //         memory_bar_x + i as f32 * (memory_bar_width / MEMORY_SIZE as f32),
+            //         memory_bar_y,
+            //         memory_bar_width / MEMORY_SIZE as f32,
+            //         memory_bar_height,
+            //         Color::from_rgba(color_value, color_value, color_value, 200)
+            //     );
+            // }
 
             for vision_vector in vision_vectors.iter() {
                 let end_point = &entity.pos + vision_vector;
@@ -287,9 +346,42 @@ async fn main() {
                     1.0,
                     WHITE
                 );
-              
             }
         }
+
+        // draw food
+        for food_item in food.iter() {
+            if food_item.energy > 0.0 {
+                draw_circle(
+                    food_item.pos[0], 
+                    food_item.pos[1],
+                    BODY_RADIUS,
+                    Color::from_rgba(0, 200, 0, 255)
+                );
+            }
+        }
+
+        // Update the organisms vector to keep only the ones that are still alive
+        organisms.retain(|entity| entity.energy > 0.0);
+        food.retain(|food_item| food_item.energy > 0.0);
+
+        // Update the kdtree with the new positions of the organisms
+        kd_tree_orgs = KdTree::new(2);
+        for (i, org_item) in organisms.iter().enumerate() {
+            kd_tree_orgs.add(
+                org_item.pos.to_vec(),
+                i as usize,
+            ).unwrap();
+        };
+
+        // Update the kdtree with the new positions of the food
+        kd_tree_food = KdTree::new(2);
+        for (i, food_item) in food.iter().enumerate() {
+            kd_tree_food.add(
+                food_item.pos.to_vec(),
+                i as usize,
+            ).unwrap();
+        };   
 
         next_frame().await
     }
