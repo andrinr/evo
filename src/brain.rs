@@ -29,11 +29,11 @@ pub struct Brain {
 
 pub fn think(brain : &Brain, inputs: Array1<f32>) -> Array1<f32> {
 
-    let mut output = Array1::zeros(brain.layers[0].weights.shape()[0]);
+    let mut output = inputs.clone();
 
     for layer in &brain.layers {
         // Dot product of weights and inputs, plus biases
-        output = layer.weights.dot(&inputs) + &layer.biases;
+        output = layer.weights.dot(&output) + &layer.biases;
         // Activation function (tanh)
         output = output.map(|x| x.tanh());
     }

@@ -8,9 +8,11 @@ use geo::{Line, Euclidean, Point};
 mod brain;
 mod organism;
 
-const BODY_RADIUS: f32 = 5.0;
-const VISION_RADIUS: f32 = 60.0;
+const BODY_RADIUS: f32 = 4.0;
+const VISION_RADIUS: f32 = 40.0;
 const ENERGY_CONSUMPTION: f32 = 0.01;
+const ACCELERATION_CONSUMPTION: f32 = 0.01;
+const ROTATION_CONSUMPTION: f32 = 0.01;
 const INIT_VELOCITY: f32 = 20.0;
 const DAMPING_FACTOR: f32 = 0.1;
 const NUM_VISION_DIRECTIONS: usize = 3; // number of vision directions
@@ -18,10 +20,6 @@ const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radia
 
 const SIGNAL_SIZE: usize = 3; // size of the signal array
 const MEMORY_SIZE: usize = 3; // size of the memory array
-const brain_layers: usize = 2; // number of layers in the brain
-// usize tuple
-const embedding_sizes: (usize, usize) = (SIGNAL_SIZE + 1, 5); // input size for the embedding layer
-
 const N_ORGANISMS: usize = 100;
 
 
@@ -53,6 +51,7 @@ fn wrap_around(v: &Array1<f32>) -> Array1<f32> {
     wrapped
 }
 
+
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
 
@@ -65,6 +64,12 @@ async fn main() {
     let mut screen_center;
 
     println!("Starting evolutionary organisms simulation");
+
+    let layer_sizes = vec![
+        (SIGNAL_SIZE + 1) * NUM_VISION_DIRECTIONS + MEMORY_SIZE + 1, // input size
+        10, // hidden layer size
+        SIGNAL_SIZE + MEMORY_SIZE + 2, // output size (signal + memory + rotation + acceleration)
+    ];
 
     loop {
         if genesis {
@@ -99,8 +104,7 @@ async fn main() {
                         INIT_VELOCITY,
                         SIGNAL_SIZE,
                         MEMORY_SIZE,
-                        HIDDEN_SIZE,
-                        NUM_VISION_DIRECTIONS,
+                        layer_sizes.clone()
                     );
 
                     kdtree.add(
@@ -116,7 +120,7 @@ async fn main() {
             continue;
         }
 
-        clear_background(DARKGRAY);
+        clear_background(LIGHTGRAY);
 
         // Clone the organisms vector
         let new_organisms = organisms.clone();
@@ -197,16 +201,17 @@ async fn main() {
                 acc * entity.rot.sin(),
             ]);
             entity.vel += &(&acc_vector * get_frame_time()); // update velocity
-            entity.energy -= acc.abs() * get_frame_time(); // energy consumption from acceleration
+            entity.energy -= acc.abs() * get_frame_time() * ACCELERATION_CONSUMPTION; // energy consumption for acceleration
+            entity.energy -= entity.rot.abs() * get_frame_time() * ROTATION_CONSUMPTION; // energy consumption for rotation
             entity.energy -= ENERGY_CONSUMPTION * get_frame_time(); // additional energy consumption
             
-            println!("Organism {}: pos = {:?}, vel = {:?}, energy = {}, signal = {:?}", 
-                entity.id, 
-                entity.pos, 
-                entity.vel, 
-                entity.energy, 
-                entity.signal
-            );
+            // println!("Organism {}: pos = {:?}, vel = {:?}, energy = {}, signal = {:?}", 
+            //     entity.id, 
+            //     entity.pos, 
+            //     entity.vel, 
+            //     entity.energy, 
+            //     entity.signal
+            // );
             if entity.energy > 0.0 {
                 keep_organisms.push(organism_id);
             }   
@@ -235,6 +240,42 @@ async fn main() {
                     255)
             );
 
+            // organism health bar
+            let health_bar_width = 20.0;
+            let health_bar_height = 3.0;
+            let health_bar_x = entity.pos[0] - health_bar_width / 2.0;
+            let health_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - 2.0;
+            draw_rectangle(
+                health_bar_x,
+                health_bar_y,
+                health_bar_width,
+                health_bar_height,
+                Color::from_rgba(100, 100, 100, 200)
+            );
+            draw_rectangle(
+                health_bar_x,
+                health_bar_y,
+                health_bar_width * (entity.energy / 1.0).max(0.0).min(1.0),
+                health_bar_height,
+                Color::from_rgba(0, 255, 0, 200)
+            );
+
+            // organism memory, simple rectangles
+            let memory_bar_width = 20.0;
+            let memory_bar_height = 3.0;
+            let memory_bar_x = entity.pos[0] - memory_bar_width / 2.0;
+            let memory_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - memory_bar_height - 2.0;
+            for (i, &value) in entity.memory.iter().enumerate() {
+                let color_value = (value * 255.0) as u8;
+                draw_rectangle(
+                    memory_bar_x + i as f32 * (memory_bar_width / MEMORY_SIZE as f32),
+                    memory_bar_y,
+                    memory_bar_width / MEMORY_SIZE as f32,
+                    memory_bar_height,
+                    Color::from_rgba(color_value, color_value, color_value, 200)
+                );
+            }
+
             for vision_vector in vision_vectors.iter() {
                 let end_point = &entity.pos + vision_vector;
                 // draw a line from the organism's position to the end point of the vision vector
@@ -243,8 +284,8 @@ async fn main() {
                     entity.pos[1],
                     end_point[0],
                     end_point[1],
-                    2.0,
-                    RED
+                    1.0,
+                    WHITE
                 );
               
             }

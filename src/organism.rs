@@ -23,8 +23,7 @@ pub fn init_random_organism(
     init_velocity : f32,
     signal_size: usize,
     memory_size: usize,
-    hidden_size: usize,
-    num_vision_directions: usize,
+    layer_sizes: Vec<usize>,
 ) -> Organism {
 
     Organism {
@@ -43,18 +42,13 @@ pub fn init_random_organism(
             memory_size
         ),
         brain: brain::Brain {
-            layers: vec![
-                brain::init_mlp(
-                    signal_size + 1, // +1 for the rotation input
-                    hidden_size,
-                    0.1
-                ),
-                brain::init_mlp(
-                    hidden_size,
-                    num_vision_directions * 2, // output size for vision vectors
-                    0.1
-                ),
-            ],
+            layers: (0..layer_sizes.len() - 1)
+                .map(|i| brain::init_mlp(
+                    layer_sizes[i],
+                    layer_sizes[i + 1],
+                    0.1 // scale for weights and biases
+                ))
+                .collect(),
         },
     }
 }
