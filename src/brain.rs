@@ -27,7 +27,7 @@ pub struct Brain {
 }
 
 
-pub fn think(brain : &Brain, inputs: Array1<f32>) -> Array1<f32> {
+pub fn think(brain : &Brain, inputs: &Array1<f32>) -> Array1<f32> {
 
     let mut output = inputs.clone();
 

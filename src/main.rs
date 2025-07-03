@@ -11,9 +11,9 @@ mod food;
 
 const BODY_RADIUS: f32 = 4.0;
 const VISION_RADIUS: f32 = 40.0;
-const ENERGY_CONSUMPTION: f32 = 0.01;
-const ACCELERATION_CONSUMPTION: f32 = 0.01;
-const ROTATION_CONSUMPTION: f32 = 0.01;
+const ENERGY_CONSUMPTION: f32 = 0.001;
+const ACCELERATION_CONSUMPTION: f32 = 0.001;
+const ROTATION_CONSUMPTION: f32 = 0.001;
 const INIT_VELOCITY: f32 = 20.0;
 const DAMPING_FACTOR: f32 = 0.1;
 const NUM_VISION_DIRECTIONS: usize = 3; // number of vision directions
@@ -21,8 +21,8 @@ const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radia
 
 const SIGNAL_SIZE: usize = 3; // size of the signal array
 const MEMORY_SIZE: usize = 3; // size of the memory array
-const N_ORGANISMS: usize = 100;
-const N_FOOD: usize = 50;
+const N_ORGANISMS: usize = 10;
+const N_FOOD: usize = 200;
 
 
 fn line_circle_distance(
@@ -140,7 +140,7 @@ async fn main() {
         // Clone the organisms vector
         let new_organisms = organisms.clone();
 
-        for (organism_id, entity) in organisms.iter_mut().enumerate() {
+        for  entity in organisms.iter_mut() {
 
             let vision_vectors = organism::get_vision_vectors(
                 entity,
@@ -160,13 +160,13 @@ async fn main() {
             // get nearest neighbors
             let neighbors_orgs = kd_tree_orgs.within(
                 &entity.pos.to_vec(),
-                VISION_RADIUS,
+                VISION_RADIUS.powi(2),
                 &squared_euclidean,
             );
 
             let neighbor_foods = kd_tree_food.within(
                 &entity.pos.to_vec(),
-                VISION_RADIUS,
+                VISION_RADIUS.powi(2),
                 &squared_euclidean,
             );
 
@@ -190,16 +190,20 @@ async fn main() {
             for (i ,vision_vector) in vision_vectors.iter().enumerate() {
                 let end_point = &entity.pos + vision_vector;
                 let mut min_distance = f32::MAX;
-                
                 // detect neighbor organisms within the vision vector
                 for (_, neighbor_id) in neighbors_orgs.iter() {
+       
                     let neighbor_org = &new_organisms[**neighbor_id];
+
+                    if neighbor_org.id == entity.id {
+                        continue; // skip self
+                    }
                     let distance = line_circle_distance(
                         &entity.pos,
                         &end_point,
                         &neighbor_org.pos
                     );
-                    if distance < min_distance {
+                    if distance < BODY_RADIUS && distance < min_distance {
                         min_distance = distance;
                         brain_inputs[(i * 2) + 0] = neighbor_org.signal[0];
                         brain_inputs[(i * 2) + 1] = neighbor_org.signal[1];
@@ -216,12 +220,12 @@ async fn main() {
                         &end_point,
                         &food_item.pos
                     );
-                    if distance < min_distance {
+                    if distance < BODY_RADIUS && distance < min_distance {
                         min_distance = distance;
-                        brain_inputs[(i * 2) + 0] = 0.0; // signal for food
-                        brain_inputs[(i * 2) + 1] = 1.0; // no signal for food
-                        brain_inputs[(i * 2) + 2] = 0.0; // no signal for food
-                        brain_inputs[(i * 2) + 3] = distance; // distance to food
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 0] = 0.0;
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 1] = 1.0; // food signal color (green)
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 2] = 0.0; // food y position
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 3] = distance; // distance to food
                     }
                 }
             }
@@ -231,7 +235,9 @@ async fn main() {
             brain_inputs.slice_mut(s![offset..offset + SIGNAL_SIZE]).assign(&entity.memory);
             brain_inputs[offset + SIGNAL_SIZE] = entity.energy; // energy
 
-            let brain_outputs = brain::think(&entity.brain, brain_inputs);
+            println!("Brain inputs for organism {}: {:?}", entity.id, brain_inputs);
+
+            let brain_outputs = brain::think(&entity.brain, &brain_inputs);
 
             entity.signal = brain_outputs.slice(s![..SIGNAL_SIZE]).to_owned();
             // apply sigmoid activation to the signal
@@ -255,7 +261,7 @@ async fn main() {
             // handle food consumption
             let food_neighbors = kd_tree_food.within(
                 &entity.pos.to_vec(),
-                BODY_RADIUS * 2.0,
+                BODY_RADIUS.powi(2),
                 &squared_euclidean,
             );
 
@@ -319,6 +325,17 @@ async fn main() {
                 Color::from_rgba(0, 255, 0, 200)
             );
 
+            // organism id
+            let id_text = format!("ID:{}", entity.id);
+            let id_text_size = measure_text(&id_text, None, 12, 1.0);
+            draw_text(
+                &id_text,
+                entity.pos[0] - id_text_size.width / 2.0,
+                entity.pos[1] - BODY_RADIUS - health_bar_height - 2.0 - 10.0,
+                9.0,
+                BLACK
+            );
+
             // // organism memory, simple rectangles
             // let memory_bar_width = 20.0;
             // let memory_bar_height = 3.0;
@@ -335,7 +352,7 @@ async fn main() {
             //     );
             // }
 
-            for vision_vector in vision_vectors.iter() {
+            for (i, vision_vector) in vision_vectors.iter().enumerate() {
                 let end_point = &entity.pos + vision_vector;
                 // draw a line from the organism's position to the end point of the vision vector
                 draw_line(
@@ -343,8 +360,13 @@ async fn main() {
                     entity.pos[1],
                     end_point[0],
                     end_point[1],
-                    1.0,
-                    WHITE
+                    3.0,
+                    Color::from_rgba(
+                        (brain_inputs[(SIGNAL_SIZE + 1) * i + 0]* 255.0) as u8,
+                        (brain_inputs[(SIGNAL_SIZE + 1) * i + 1] * 255.0) as u8,
+                        (brain_inputs[(SIGNAL_SIZE + 1) * i + 2] * 255.0) as u8,
+                        255
+                    )
                 );
             }
         }
