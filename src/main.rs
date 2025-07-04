@@ -1,6 +1,9 @@
 use geo::Distance;
 use macroquad::prelude::*;
 use ndarray::{Array1, s};
+use ndarray_rand::{RandomExt};
+use ndarray_rand::rand_distr::Uniform;
+
 use kdtree::KdTree;
 use kdtree::distance::squared_euclidean;
 use geo::{Line, Euclidean, Point};
@@ -9,20 +12,21 @@ mod brain;
 mod organism;
 mod food;
 
-const BODY_RADIUS: f32 = 4.0;
-const VISION_RADIUS: f32 = 40.0;
-const ENERGY_CONSUMPTION: f32 = 0.001;
-const ACCELERATION_CONSUMPTION: f32 = 0.001;
-const ROTATION_CONSUMPTION: f32 = 0.001;
-const INIT_VELOCITY: f32 = 20.0;
-const DAMPING_FACTOR: f32 = 0.1;
+const BODY_RADIUS: f32 = 3.0;
+const VISION_RADIUS: f32 = 30.0;
+const ENERGY_CONSUMPTION: f32 = 0.009;
+const ACCELERATION_CONSUMPTION: f32 = 0.0001;
+const ROTATION_CONSUMPTION: f32 = 0.0001;
+// const INIT_VELOCITY: f32 = 20.0;
+const DAMPING_FACTOR: f32 = 0.6;
 const NUM_VISION_DIRECTIONS: usize = 3; // number of vision directions
 const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radians
 
+
 const SIGNAL_SIZE: usize = 3; // size of the signal array
 const MEMORY_SIZE: usize = 3; // size of the memory array
-const N_ORGANISMS: usize = 10;
-const N_FOOD: usize = 200;
+const N_ORGANISMS: usize = 150;
+const N_FOOD: usize = 800;
 
 
 fn line_circle_distance(
@@ -65,7 +69,7 @@ async fn main() {
 
     let mut genesis = true;
 
-    let mut screen_center;
+    let mut screen_center = Array1::zeros(2);
 
     println!("Starting evolutionary organisms simulation");
 
@@ -75,17 +79,19 @@ async fn main() {
         SIGNAL_SIZE + MEMORY_SIZE + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
+    let mut max_id = 0;
+
     loop {
+        
+        screen_center = Array1::from_vec(vec![
+            screen_width() / 2.,
+            screen_height() / 2.,
+        ]);
         if genesis {
             
             clear_background(LIGHTGRAY);
             let text = "Start a new evolution by pressing Enter";
-            let font_size = 30.;
-
-            screen_center = Array1::from_vec(vec![
-                screen_width() / 2.,
-                screen_height() / 2.,
-            ]);
+            let font_size = 30.0;
 
             let text_size = measure_text(text, None, font_size as _, 1.0);
             draw_text(
@@ -105,7 +111,7 @@ async fn main() {
                     let entity = organism::init_random_organism(
                         i, 
                         &screen_center, 
-                        INIT_VELOCITY,
+                        // INIT_VELOCITY,
                         SIGNAL_SIZE,
                         MEMORY_SIZE,
                         layer_sizes.clone()
@@ -117,6 +123,8 @@ async fn main() {
                     ).unwrap();
 
                     organisms.push(entity);
+
+                    max_id = i + 1; // update max_id to the last id used
 
                 }
 
@@ -146,11 +154,12 @@ async fn main() {
                 entity,
                 FIELD_OF_VIEW,
                 NUM_VISION_DIRECTIONS,
+                VISION_RADIUS,
             );
             
             // euler integration
-            entity.pos += &(&entity.vel * get_frame_time());
-            entity.vel *= 1.0 - DAMPING_FACTOR * get_frame_time(); // damping
+            // entity.pos += &(&entity.vel * get_frame_time());
+            // entity.vel *= 1.0 - DAMPING_FACTOR * get_frame_time(); // damping
 
             // wrap around the screen
             entity.pos = wrap_around(&entity.pos);
@@ -210,6 +219,12 @@ async fn main() {
                         brain_inputs[(i * 2) + 2] = neighbor_org.signal[2];
                         brain_inputs[(i * 2) + 3] = distance;
                     }
+
+                    let org_org_distance = (&entity.pos - &neighbor_org.pos).mapv(|x| x.abs()).sum();
+
+                    if org_org_distance < BODY_RADIUS * 2.0 {
+                        entity.energy = 0.0; // collision with another organism, set energy to 0
+                    }
                 }
 
                 // detect neighbor food within the vision vector
@@ -235,8 +250,6 @@ async fn main() {
             brain_inputs.slice_mut(s![offset..offset + SIGNAL_SIZE]).assign(&entity.memory);
             brain_inputs[offset + SIGNAL_SIZE] = entity.energy; // energy
 
-            println!("Brain inputs for organism {}: {:?}", entity.id, brain_inputs);
-
             let brain_outputs = brain::think(&entity.brain, &brain_inputs);
 
             entity.signal = brain_outputs.slice(s![..SIGNAL_SIZE]).to_owned();
@@ -248,20 +261,23 @@ async fn main() {
             // update age
             entity.age += get_frame_time();
 
-            let acc = brain_outputs[brain_outputs.len() - 1]; // acceleration
-            let acc_vector = Array1::from_vec(vec![
-                acc * entity.rot.cos(),
-                acc * entity.rot.sin(),
-            ]);
-            entity.vel += &(&acc_vector * get_frame_time()); // update velocity
-            entity.energy -= acc.abs() * get_frame_time() * ACCELERATION_CONSUMPTION; // energy consumption for acceleration
+            let vel = brain_outputs[brain_outputs.len() - 1]; // acceleration
+            // println!("Organism {}: acc = {}, rot = {}, energy = {}", 
+            //     entity.id, acc, entity.rot, entity.energy);
+            let vel_vector = Array1::from_vec(vec![
+                vel * entity.rot.cos(),
+                vel * entity.rot.sin(),
+            ]) * 40.0; // scale acceleration
+   
+            entity.pos += &(&vel_vector * get_frame_time()); // update velocity
+            entity.energy -= vel.abs() * get_frame_time() * ACCELERATION_CONSUMPTION; // energy consumption for acceleration
             entity.energy -= entity.rot.abs() * get_frame_time() * ROTATION_CONSUMPTION; // energy consumption for rotation
             entity.energy -= ENERGY_CONSUMPTION * get_frame_time(); // additional energy consumption
 
             // handle food consumption
             let food_neighbors = kd_tree_food.within(
                 &entity.pos.to_vec(),
-                BODY_RADIUS.powi(2),
+                (BODY_RADIUS * 2.0).powi(2),
                 &squared_euclidean,
             );
 
@@ -279,12 +295,12 @@ async fn main() {
                     entity.energy += food_item.energy; // consume the food
                     // cap energy to a maximum value
                     entity.energy = entity.energy.min(1.0);
+                    entity.score += 1; // increase score for reproduction
                     food_item.energy = 0.0; // remove the food
 
-                    println!("Organism {} consumed food at {:?}", entity.id, food_item.pos);
+                    // println!("Organism {} consumed food at {:?}", entity.id, food_item.pos);
                 }
             }
-
             // println!("Organism {}: pos = {:?}, vel = {:?}, energy = {}, signal = {:?}", 
             //     entity.id, 
             //     entity.pos, 
@@ -336,6 +352,28 @@ async fn main() {
                 BLACK
             );
 
+            // organism age
+            let age_text = format!("Age: {:.1}", entity.age);
+            let age_text_size = measure_text(&age_text, None, 12, 1.0);
+            draw_text(
+                &age_text,
+                entity.pos[0] - age_text_size.width / 2.0,
+                entity.pos[1] - BODY_RADIUS - health_bar_height - 2.0 - 20.0,
+                9.0,
+                BLACK
+            );
+
+            // organism score
+            let score_text = format!("Score: {}", entity.score);
+            let score_text_size = measure_text(&score_text, None, 12, 1.0);
+            draw_text(
+                &score_text,
+                entity.pos[0] - score_text_size.width / 2.0,
+                entity.pos[1] - BODY_RADIUS - health_bar_height - 2.0 - 30.0,
+                9.0,
+                BLACK
+            );
+
             // // organism memory, simple rectangles
             // let memory_bar_width = 20.0;
             // let memory_bar_height = 3.0;
@@ -360,7 +398,7 @@ async fn main() {
                     entity.pos[1],
                     end_point[0],
                     end_point[1],
-                    3.0,
+                    1.0,
                     Color::from_rgba(
                         (brain_inputs[(SIGNAL_SIZE + 1) * i + 0]* 255.0) as u8,
                         (brain_inputs[(SIGNAL_SIZE + 1) * i + 1] * 255.0) as u8,
@@ -386,6 +424,88 @@ async fn main() {
         // Update the organisms vector to keep only the ones that are still alive
         organisms.retain(|entity| entity.energy > 0.0);
         food.retain(|food_item| food_item.energy > 0.0);
+
+        // sort organisms by score in descending order
+        organisms.sort_by(|a, b| b.score.cmp(&a.score));
+
+        // spawn new organisms if there are less than N_ORGANISMS
+        if organisms.len() < N_ORGANISMS {
+
+            let mut new_organism = organism::init_random_organism(
+                max_id,
+                &screen_center, 
+                // INIT_VELOCITY,
+                SIGNAL_SIZE,
+                MEMORY_SIZE,
+                layer_sizes.clone(),
+            );
+
+            let mutation_scale = rand::gen_range(0.002, 0.2);
+
+            println!("mutation scale: {}", mutation_scale);
+
+            // choose reproduction strategy randomly
+
+            // let reproduction_strategy = rand::gen_range(0, 2); 
+
+            // if reproduction_strategy == 2 {
+                
+            //     // pick a random organism to reproduce
+            //     let id_a = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
+            //     let id_b = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
+
+            //     let parent_1 = &organisms[id_a];
+            //     let parent_2 = &organisms[id_b];
+
+            //     let mut crossover_brain = brain::crossover(&parent_1.brain, &parent_2.brain);
+
+            //     brain::mutate_brain(
+            //         // pass as mutable
+            //         &mut crossover_brain,
+            //         0.1, // mutation rate
+            //     );
+
+            //     // set the new organism's brain to the crossover brain
+            //     new_organism.brain = crossover_brain;
+
+            // } else if reproduction_strategy == 1 {
+
+                let id = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
+
+                let parent = &organisms[id];
+
+                // clone the parent's brain
+                let mut cloned_brain = parent.brain.clone();
+
+                brain::mutate_brain(
+                    &mut cloned_brain,
+                    mutation_scale, // mutation rate
+                );
+
+                // set the new organism's brain to the cloned brain
+                new_organism.brain = cloned_brain;
+            // } 
+
+            max_id += 1; // increment max_id for the new organism
+
+            kd_tree_orgs.add(
+                new_organism.pos.to_vec(),
+                organisms.len(),
+            ).unwrap();
+
+            organisms.push(new_organism);
+        }
+
+        // spawn new food if there are less than N_FOOD
+        if food.len() < N_FOOD {
+            let food_item = food::init_random_food(food.len(), &screen_center);
+            kd_tree_food.add(
+                food_item.pos.to_vec(),
+                food.len(),
+            ).unwrap();
+            food.push(food_item);
+        }
+
 
         // Update the kdtree with the new positions of the organisms
         kd_tree_orgs = KdTree::new(2);
