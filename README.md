@@ -8,6 +8,13 @@ Since crossover operations for MLPs are not well defined, each time an agent die
 
 Suprisingly, this approach works well and after at the mark of the 1000th agent the agents are able to avoid each other and move towards food.
 
+I have spent only a few hours on this project. Things that could be improved are:
+- Progressively increase environmental stress by adding hunting mechanics.
+- Improve performance. 
+- Test different NN architectures. 
+- Experiment with crossover operations.
+
+The code is inspired by this video: https://www.youtube.com/watch?v=RjweUYtpNq4
 
 ## Running the Code
 
