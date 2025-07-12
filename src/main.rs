@@ -143,7 +143,7 @@ async fn main() {
             continue;
         }
 
-        clear_background(LIGHTGRAY);
+        clear_background(WHITE);
 
         // Clone the organisms vector
         let new_organisms = organisms.clone();
@@ -238,8 +238,8 @@ async fn main() {
                     if distance < BODY_RADIUS && distance < min_distance {
                         min_distance = distance;
                         brain_inputs[(SIGNAL_SIZE + 1) * i + 0] = 0.0;
-                        brain_inputs[(SIGNAL_SIZE + 1) * i + 1] = 1.0; // food signal color (green)
-                        brain_inputs[(SIGNAL_SIZE + 1) * i + 2] = 0.0; // food y position
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 1] = 0.2; // food signal color (green)
+                        brain_inputs[(SIGNAL_SIZE + 1) * i + 2] = 1.0; // food y position
                         brain_inputs[(SIGNAL_SIZE + 1) * i + 3] = distance; // distance to food
                     }
                 }
@@ -323,7 +323,7 @@ async fn main() {
 
             // organism health bar
             let health_bar_width = 20.0;
-            let health_bar_height = 3.0;
+            let health_bar_height = 2.0;
             let health_bar_x = entity.pos[0] - health_bar_width / 2.0;
             let health_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - 2.0;
             draw_rectangle(
@@ -338,7 +338,7 @@ async fn main() {
                 health_bar_y,
                 health_bar_width * (entity.energy / 1.0).max(0.0).min(1.0),
                 health_bar_height,
-                Color::from_rgba(0, 255, 0, 200)
+                Color::from_rgba(255, 0, 0, 255)
             );
 
             // organism id
@@ -416,7 +416,7 @@ async fn main() {
                     food_item.pos[0], 
                     food_item.pos[1],
                     BODY_RADIUS,
-                    Color::from_rgba(0, 200, 0, 255)
+                    Color::from_rgba(0, 100, 255, 255)
                 );
             }
         }
