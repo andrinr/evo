@@ -1,5 +1,4 @@
 use crate::evolution;
-use crate::organism;
 
 use macroquad::prelude::*;
 use rayon::prelude::*;
@@ -20,13 +19,6 @@ pub fn draw_food(state : &evolution::State, params : &evolution::Params) {
 pub fn draw_organisms(state : &evolution::State, params : &evolution::Params){
 
     state.organisms.par_iter_mut().for_each(|entity| {
-
-        let vision_vectors = organism::get_vision_vectors(
-            entity,
-            params.fov,
-            params.num_vision_directions,
-            params.vision_radius,
-        );
 
         draw_circle(
             entity.pos[0], 
@@ -92,6 +84,12 @@ pub fn draw_organisms(state : &evolution::State, params : &evolution::Params){
             BLACK
         );
 
+        // let vision_vectors = organism::get_vision_vectors(
+        //     entity,
+        //     params.fov,
+        //     params.num_vision_directions,
+        //     params.vision_radius,
+        // );
         // // organism memory, simple rectangles
         // let memory_bar_width = 20.0;
         // let memory_bar_height = 3.0;

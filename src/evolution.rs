@@ -5,10 +5,11 @@ use crate::brain;
 
 use kdtree::KdTree;
 use kdtree::distance::squared_euclidean;
-use rand::Rng;
+// use rand::Rng;
 use ndarray::{Array1, s};
 use rayon::prelude::*;
 use geo::{Line, Euclidean, Point};
+use geo::algorithm::Distance;
 
 #[derive(Debug, Clone)]
 pub struct State {
@@ -20,20 +21,20 @@ pub struct State {
 
 #[derive(Debug, Clone)]
 pub struct Params {
-   body_radius : f32,
-   vision_radius : f32,
-   idle_energy_rate : f32,
-   move_energy_rate : f32,
-   rot_energy_rate : f32,
-   num_vision_directions : usize,
-   fov : f32,
-   signal_size : usize,
-   memory_size : usize,
-   n_organism : usize,
-   n_food : usize,
-   box_width : f32,
-   box_height : f32,
-   layer_sizes : Vec<usize>,
+   pub body_radius : f32,
+   pub vision_radius : f32,
+   pub idle_energy_rate : f32,
+   pub move_energy_rate : f32,
+   pub rot_energy_rate : f32,
+   pub num_vision_directions : usize,
+   pub fov : f32,
+   pub signal_size : usize,
+   pub memory_size : usize,
+   pub n_organism : usize,
+   pub n_food : usize,
+   pub box_width : f32,
+   pub box_height : f32,
+   pub layer_sizes : Vec<usize>,
 }
 
 
@@ -133,7 +134,7 @@ pub fn step(state : &State, params : &Params, dt : f32){
     
     // Clone the organisms vector
     let new_organisms = state.organisms.clone();
-    let new_food = state.food.clone();
+    // let new_food = state.food.clone();
 
     state.organisms.par_iter_mut().for_each(|entity| {
         let vision_vectors = organism::get_vision_vectors(
@@ -309,19 +310,19 @@ pub fn spawn(state : &State, params : &Params){
 
         state.generation += 1;
 
-        let mutation_scale = rand::rng().gen_range(0.002, 0.2);
+        let mutation_scale = rand::rng().random_range(0.002, 0.2);
 
         println!("mutation scale: {}", mutation_scale);
 
         // choose reproduction strategy randomly
 
-        let reproduction_strategy = rand::rng().gen_range(0, 2); 
+        let reproduction_strategy = rand::rng().random_range(0, 2); 
 
         if reproduction_strategy == 2 {
             
             // pick a random organism to reproduce
-            let id_a = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
-            let id_b = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
+            let id_a = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
+            let id_b = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
 
             let parent_1 = &state.organisms[id_a];
             let parent_2 = &state.organisms[id_b];
@@ -339,7 +340,7 @@ pub fn spawn(state : &State, params : &Params){
 
         } else if reproduction_strategy == 1 {
 
-            let id = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
+            let id = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
 
             let parent = &state.organisms[id];
 

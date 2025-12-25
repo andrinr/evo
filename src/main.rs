@@ -1,5 +1,4 @@
 use macroquad::prelude::*;
-use ndarray::{Array1};
 
 mod brain;
 mod organism;
@@ -7,34 +6,21 @@ mod food;
 mod evolution;
 mod graphics;
 
-const BODY_RADIUS: f32 = 3.0;
-const VISION_RADIUS: f32 = 30.0;
-const ENERGY_CONSUMPTION: f32 = 0.009;
-const ACCELERATION_CONSUMPTION: f32 = 0.0001;
-const ROTATION_CONSUMPTION: f32 = 0.0001;
-// const INIT_VELOCITY: f32 = 20.0;
-const DAMPING_FACTOR: f32 = 0.6;
-const NUM_VISION_DIRECTIONS: usize = 3; // number of vision directions
-const FIELD_OF_VIEW: f32 = std::f32::consts::PI / 2.0; // field of view in radians
-
-
-const SIGNAL_SIZE: usize = 3; // size of the signal array
-const MEMORY_SIZE: usize = 3; // size of the memory array
-const N_ORGANISMS: usize = 150;
-const N_FOOD: usize = 800;
-
-
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
 
     let mut genesis = true;
 
-    let mut state : evolution::State;
+    let mut state : Option<evolution::State> = None;
+
+    let signal_size : usize = 3;
+    let num_vision_directions: usize = 3;
+    let memory_size : usize = 3;
 
     let layer_sizes = vec![
-        (SIGNAL_SIZE + 1) * NUM_VISION_DIRECTIONS + MEMORY_SIZE + 1, // input size
+        (signal_size + 1) * num_vision_directions + memory_size + 1, // input size
         10, // hidden layer size
-        SIGNAL_SIZE + MEMORY_SIZE + 2, // output size (signal + memory + rotation + acceleration)
+        signal_size + memory_size + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
     let params = evolution::Params {
@@ -43,10 +29,10 @@ async fn main() {
         idle_energy_rate: 0.009,
         move_energy_rate: 0.0001,
         rot_energy_rate: 0.0001,
-        num_vision_directions: 3,
+        num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
-        signal_size: 3,
-        memory_size: 3,
+        signal_size,
+        memory_size,
         n_organism: 150,
         n_food: 800,
         box_width : 1.0,
@@ -54,16 +40,10 @@ async fn main() {
         layer_sizes
     };
 
-    let mut screen_center = Array1::zeros(2);
-
     println!("Starting evolutionary organisms simulation");
 
     loop {
         
-        screen_center = Array1::from_vec(vec![
-            screen_width() / 2.,
-            screen_height() / 2.,
-        ]);
         if genesis {
             
             clear_background(LIGHTGRAY);
@@ -83,7 +63,7 @@ async fn main() {
 
                 genesis = false;
 
-                state = evolution::init(&params)
+                state = Some(evolution::init(&params));
             }
             next_frame().await;
             continue;
