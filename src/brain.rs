@@ -45,34 +45,20 @@ pub fn crossover(
     brain_1: &Brain,
     brain_2: &Brain,
 ) -> Brain {
-    // Crossover for weights and biases of MLP
-    // We randomly choose neurons from each parent brain
-    // that means we select all 
+    // Average crossover operartion
     let mut new_layers = Vec::new();
 
     for (layer_1, layer_2) in brain_1.layers.iter().zip(&brain_2.layers) {
         let mut new_weights = Array2::zeros(layer_1.weights.dim());
         let mut new_biases = Array1::zeros(layer_1.biases.len());
 
-        let mask_weights = Array2::random(
-            layer_1.weights.dim(),
-            Uniform::new(0, 2)
-        ).mapv(|x| x as f32);
-
-        new_weights = &layer_1.weights * &mask_weights + &layer_2.weights * (1.0 - &mask_weights);
-
-        let mask_bias = Array1::random(
-            layer_1.biases.len(),
-            Uniform::new(0, 2)
-        ).mapv(|x| x as f32);
-
-        new_biases = &layer_1.biases * &mask_bias + &layer_2.biases * (1.0 - &mask_bias);
+        new_weights = &layer_1.weights * 0.5 + &layer_2.weights * 0.5;
+        new_biases = &layer_1.biases * 0.5 + &layer_2.biases * 0.5;
 
         new_layers.push(MLP {
             weights: new_weights,
             biases: new_biases,
         });
-
     }
 
     Brain {

@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2};
+use ndarray::{Array1};
 use ndarray_rand::{RandomExt};
 use ndarray_rand::rand_distr::Uniform;
 
@@ -58,10 +58,10 @@ pub fn init_random_organism(
 
    
 pub fn get_vision_vectors(
-        organism: &Organism,
-        field_of_view: f32,
-        num_vision_directions: usize,
-        vision_length: f32
+    organism: &Organism,
+    field_of_view: f32,
+    num_vision_directions: usize,
+    vision_length: f32
 ) -> Vec<Array1<f32>> {
 
 
