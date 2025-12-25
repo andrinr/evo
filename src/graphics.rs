@@ -1,27 +1,42 @@
 use crate::evolution;
 
 use macroquad::prelude::*;
-use rayon::prelude::*;
 
 pub fn draw_food(state: &evolution::State, params: &evolution::Params) {
+    let screen_w = screen_width();
+    let screen_h = screen_height();
+    let scale_x = screen_w / params.box_width;
+    let scale_y = screen_h / params.box_height;
+    let scale = scale_x.min(scale_y); // uniform scaling factor
+
     // draw food
-    state.food.par_iter().for_each(|entity| {
+    state.food.iter().for_each(|entity| {
         if entity.energy > 0.0 {
             draw_circle(
-                entity.pos[0],
-                entity.pos[1],
-                params.body_radius,
+                entity.pos[0] * scale_x,
+                entity.pos[1] * scale_y,
+                params.body_radius * scale,
                 Color::from_rgba(0, 100, 255, 255),
             );
         }
     });
 }
 pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
-    state.organisms.par_iter().for_each(|entity| {
+    let screen_w = screen_width();
+    let screen_h = screen_height();
+    let scale_x = screen_w / params.box_width;
+    let scale_y = screen_h / params.box_height;
+    let scale = scale_x.min(scale_y); // uniform scaling factor
+
+    state.organisms.iter().for_each(|entity| {
+        let screen_x = entity.pos[0] * scale_x;
+        let screen_y = entity.pos[1] * scale_y;
+        let scaled_radius = params.body_radius * scale;
+
         draw_circle(
-            entity.pos[0],
-            entity.pos[1],
-            params.body_radius,
+            screen_x,
+            screen_y,
+            scaled_radius,
             Color::from_rgba(
                 (entity.signal[0] * 255.0) as u8,
                 (entity.signal[1] * 255.0) as u8,
@@ -30,11 +45,12 @@ pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
             ),
         );
 
-        // organism health bar
-        let health_bar_width = 20.0;
-        let health_bar_height = 2.0;
-        let health_bar_x = entity.pos[0] - health_bar_width / 2.0;
-        let health_bar_y = entity.pos[1] - params.body_radius - health_bar_height - 2.0;
+        // organism health bar (scaled)
+        let health_bar_width = 20.0 * scale;
+        let health_bar_height = 2.0 * scale;
+        let health_bar_offset = 2.0 * scale;
+        let health_bar_x = screen_x - health_bar_width / 2.0;
+        let health_bar_y = screen_y - scaled_radius - health_bar_height - health_bar_offset;
         draw_rectangle(
             health_bar_x,
             health_bar_y,
@@ -50,36 +66,40 @@ pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
             Color::from_rgba(255, 0, 0, 255),
         );
 
+        // text scaling
+        let font_size = (9.0 * scale).max(8.0); // minimum font size of 8
+        let text_spacing = 10.0 * scale;
+
         // organism id
         let id_text = format!("ID:{}", entity.id);
-        let id_text_size = measure_text(&id_text, None, 12, 1.0);
+        let id_text_size = measure_text(&id_text, None, font_size as u16, 1.0);
         draw_text(
             &id_text,
-            entity.pos[0] - id_text_size.width / 2.0,
-            entity.pos[1] - params.body_radius - health_bar_height - 2.0 - 10.0,
-            9.0,
+            screen_x - id_text_size.width / 2.0,
+            health_bar_y - text_spacing,
+            font_size,
             BLACK,
         );
 
         // organism age
         let age_text = format!("Age: {:.1}", entity.age);
-        let age_text_size = measure_text(&age_text, None, 12, 1.0);
+        let age_text_size = measure_text(&age_text, None, font_size as u16, 1.0);
         draw_text(
             &age_text,
-            entity.pos[0] - age_text_size.width / 2.0,
-            entity.pos[1] - params.body_radius - health_bar_height - 2.0 - 20.0,
-            9.0,
+            screen_x - age_text_size.width / 2.0,
+            health_bar_y - text_spacing * 2.0,
+            font_size,
             BLACK,
         );
 
         // organism score
         let score_text = format!("Score: {}", entity.score);
-        let score_text_size = measure_text(&score_text, None, 12, 1.0);
+        let score_text_size = measure_text(&score_text, None, font_size as u16, 1.0);
         draw_text(
             &score_text,
-            entity.pos[0] - score_text_size.width / 2.0,
-            entity.pos[1] - params.body_radius - health_bar_height - 2.0 - 30.0,
-            9.0,
+            screen_x - score_text_size.width / 2.0,
+            health_bar_y - text_spacing * 3.0,
+            font_size,
             BLACK,
         );
 

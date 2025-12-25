@@ -136,8 +136,6 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
         // wrap around the screen
         entity.pos = wrap_around(&entity.pos, params.box_width, params.box_width);
 
-        entity.energy -= params.idle_energy_rate * dt; // energy consumption
-
         // get nearest neighbors
         let neighbors_orgs = kd_tree_orgs.within(
             &entity.pos.to_vec(),
@@ -338,13 +336,11 @@ pub fn spawn(state: &mut State, params: &Params) {
                 mutation_scale, // mutation rate
             );
 
-            // set the new organism's brain to the cloned brain
             new_organism.brain = cloned_brain;
         }
         state.organisms.push(new_organism);
     }
 
-    // spawn new food if there are less than N_FOOD
     if state.food.len() < params.n_food {
         let food_item = food::init_random_food(&center);
         state.food.push(food_item);
