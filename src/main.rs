@@ -1,25 +1,24 @@
 use macroquad::prelude::*;
 
 mod brain;
-mod organism;
-mod food;
 mod evolution;
+mod food;
 mod graphics;
+mod organism;
 
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
-
     let mut genesis = true;
 
-    let mut state : Option<evolution::State> = None;
+    let mut state: Option<evolution::State> = None;
 
-    let signal_size : usize = 3;
+    let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
-    let memory_size : usize = 3;
+    let memory_size: usize = 3;
 
     let layer_sizes = vec![
         (signal_size + 1) * num_vision_directions + memory_size + 1, // input size
-        10, // hidden layer size
+        10,                                                          // hidden layer size
         signal_size + memory_size + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
@@ -35,17 +34,15 @@ async fn main() {
         memory_size,
         n_organism: 150,
         n_food: 800,
-        box_width : 1.0,
-        box_height : 1.0,
-        layer_sizes
+        box_width: 1.0,
+        box_height: 1.0,
+        layer_sizes,
     };
 
     println!("Starting evolutionary organisms simulation");
 
     loop {
-        
         if genesis {
-            
             clear_background(LIGHTGRAY);
             let text = "Start a new evolution by pressing Enter";
             let font_size = 30.0;
@@ -60,7 +57,6 @@ async fn main() {
             );
 
             if is_key_down(KeyCode::Enter) {
-
                 genesis = false;
 
                 state = Some(evolution::init(&params));
@@ -72,13 +68,11 @@ async fn main() {
         clear_background(WHITE);
 
         if let Some(ref mut state) = state {
-            
             evolution::step(&state, &params, 0.01);
             evolution::spawn(&state, &params);
 
             graphics::draw_food(&state, &params);
             graphics::draw_organisms(&state, &params);
-
         }
 
         next_frame().await

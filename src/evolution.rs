@@ -1,15 +1,14 @@
-
-use crate::organism;
-use crate::food;
 use crate::brain;
+use crate::food;
+use crate::organism;
 
 use kdtree::KdTree;
 use kdtree::distance::squared_euclidean;
 // use rand::Rng;
+use geo::algorithm::Distance;
+use geo::{Euclidean, Line, Point};
 use ndarray::{Array1, s};
 use rayon::prelude::*;
-use geo::{Line, Euclidean, Point};
-use geo::algorithm::Distance;
 
 #[derive(Debug, Clone)]
 pub struct State {
@@ -21,44 +20,38 @@ pub struct State {
 
 #[derive(Debug, Clone)]
 pub struct Params {
-   pub body_radius : f32,
-   pub vision_radius : f32,
-   pub idle_energy_rate : f32,
-   pub move_energy_rate : f32,
-   pub rot_energy_rate : f32,
-   pub num_vision_directions : usize,
-   pub fov : f32,
-   pub signal_size : usize,
-   pub memory_size : usize,
-   pub n_organism : usize,
-   pub n_food : usize,
-   pub box_width : f32,
-   pub box_height : f32,
-   pub layer_sizes : Vec<usize>,
+    pub body_radius: f32,
+    pub vision_radius: f32,
+    pub idle_energy_rate: f32,
+    pub move_energy_rate: f32,
+    pub rot_energy_rate: f32,
+    pub num_vision_directions: usize,
+    pub fov: f32,
+    pub signal_size: usize,
+    pub memory_size: usize,
+    pub n_organism: usize,
+    pub n_food: usize,
+    pub box_width: f32,
+    pub box_height: f32,
+    pub layer_sizes: Vec<usize>,
 }
 
-
-pub fn init(
-    params : &Params
-) -> State {
-    
+pub fn init(params: &Params) -> State {
     let mut organisms = Vec::with_capacity(params.n_organism);
     let mut food = Vec::with_capacity(params.n_food);
 
     let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
-    for i in 0.. params.n_organism {
-
+    for i in 0..params.n_organism {
         let entity = organism::init_random_organism(
-            i, 
-            &center, 
+            i,
+            &center,
             params.signal_size,
             params.memory_size,
-            params.layer_sizes.clone()
+            params.layer_sizes.clone(),
         );
 
         organisms.push(entity);
-
     }
 
     for i in 0..params.n_food {
@@ -67,37 +60,31 @@ pub fn init(
         food.push(food_item);
     }
 
-    return State{
+    return State {
         organisms,
-        food, 
-        time : 0.,
-        generation : params.n_organism as u32
-    }
+        food,
+        time: 0.,
+        generation: params.n_organism as u32,
+    };
 }
 
 type Tree2D = KdTree<f32, usize, Vec<f32>>;
 
-fn build_trees(state : &State) -> (Tree2D, Tree2D){
-
+fn build_trees(state: &State) -> (Tree2D, Tree2D) {
     let mut kd_tree_orgs = KdTree::with_capacity(2, state.organisms.len());
     for (i, org_item) in state.organisms.iter().enumerate() {
-        kd_tree_orgs.add(
-            org_item.pos.to_vec(),
-            i as usize,
-        ).unwrap();
-    };
+        kd_tree_orgs.add(org_item.pos.to_vec(), i as usize).unwrap();
+    }
 
     let mut kd_tree_food = KdTree::with_capacity(2, state.food.len());
     for (i, food_item) in state.food.iter().enumerate() {
-        kd_tree_food.add(
-            food_item.pos.to_vec(),
-            i as usize,
-        ).unwrap();
-    };
+        kd_tree_food
+            .add(food_item.pos.to_vec(), i as usize)
+            .unwrap();
+    }
 
-    return (kd_tree_orgs, kd_tree_food)
+    return (kd_tree_orgs, kd_tree_food);
 }
-
 
 fn line_circle_distance(
     line_start: &Array1<f32>,
@@ -107,18 +94,17 @@ fn line_circle_distance(
     let p = Point::new(circle_center[0], circle_center[1]);
     let line = Line::new(
         Point::new(line_start[0], line_start[1]),
-        Point::new(line_end[0] , line_end[1]),
+        Point::new(line_end[0], line_end[1]),
     );
     Euclidean.distance(&p, &line)
 }
 
-
-fn wrap_around(v: &Array1<f32>, box_width : f32, box_height : f32) -> Array1<f32> {
+fn wrap_around(v: &Array1<f32>, box_width: f32, box_height: f32) -> Array1<f32> {
     let mut wrapped = v.clone();
     if wrapped[0] < 0.0 {
         wrapped[0] += box_width;
     } else if wrapped[0] > box_width {
-        wrapped[0] -= box_width;   
+        wrapped[0] -= box_width;
     }
     if wrapped[1] < 0.0 {
         wrapped[1] += box_height;
@@ -128,10 +114,9 @@ fn wrap_around(v: &Array1<f32>, box_width : f32, box_height : f32) -> Array1<f32
     wrapped
 }
 
-pub fn step(state : &State, params : &Params, dt : f32){
-
+pub fn step(state: &State, params: &Params, dt: f32) {
     let (kd_tree_orgs, kd_tree_food) = build_trees(&state);
-    
+
     // Clone the organisms vector
     let new_organisms = state.organisms.clone();
     // let new_food = state.food.clone();
@@ -143,7 +128,7 @@ pub fn step(state : &State, params : &Params, dt : f32){
             params.num_vision_directions,
             params.vision_radius,
         );
-        
+
         // wrap around the screen
         entity.pos = wrap_around(&entity.pos, params.box_width, params.box_width);
 
@@ -179,24 +164,20 @@ pub fn step(state : &State, params : &Params, dt : f32){
 
         // collect all the signals from neighbor organisms and food
         let mut brain_inputs = Array1::zeros(
-            (params.signal_size + 1) * params.num_vision_directions + params.memory_size + 1);
+            (params.signal_size + 1) * params.num_vision_directions + params.memory_size + 1,
+        );
 
-        for (i ,vision_vector) in vision_vectors.iter().enumerate() {
+        for (i, vision_vector) in vision_vectors.iter().enumerate() {
             let end_point = &entity.pos + vision_vector;
             let mut min_distance = f32::MAX;
             // detect neighbor organisms within the vision vector
             for (_, neighbor_id) in neighbors_orgs.iter() {
-    
                 let neighbor_org = &new_organisms[**neighbor_id];
 
                 if neighbor_org.id == entity.id {
                     continue; // skip self
                 }
-                let distance = line_circle_distance(
-                    &entity.pos,
-                    &end_point,
-                    &neighbor_org.pos
-                );
+                let distance = line_circle_distance(&entity.pos, &end_point, &neighbor_org.pos);
                 if distance < params.body_radius && distance < min_distance {
                     min_distance = distance;
                     brain_inputs[(i * 2) + 0] = neighbor_org.signal[0];
@@ -215,11 +196,7 @@ pub fn step(state : &State, params : &Params, dt : f32){
             // detect neighbor food within the vision vector
             for (_, food_id) in neighbor_foods.iter() {
                 let food_item = &state.food[**food_id];
-                let distance = line_circle_distance(
-                    &entity.pos,
-                    &end_point,
-                    &food_item.pos
-                );
+                let distance = line_circle_distance(&entity.pos, &end_point, &food_item.pos);
                 if distance < params.body_radius && distance < min_distance {
                     min_distance = distance;
                     brain_inputs[(params.signal_size + 1) * i + 0] = 0.0;
@@ -232,7 +209,9 @@ pub fn step(state : &State, params : &Params, dt : f32){
 
         let offset = (params.signal_size + 1) * params.num_vision_directions;
         // Add the organism's own signal to the inputs
-        brain_inputs.slice_mut(s![offset..offset + params.signal_size]).assign(&entity.memory);
+        brain_inputs
+            .slice_mut(s![offset..offset + params.signal_size])
+            .assign(&entity.memory);
         brain_inputs[offset + params.signal_size] = entity.energy; // energy
 
         let brain_outputs = brain::think(&entity.brain, &brain_inputs);
@@ -240,19 +219,21 @@ pub fn step(state : &State, params : &Params, dt : f32){
         entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
         // apply sigmoid activation to the signal
         entity.signal = entity.signal.mapv(|x| 1.0 / (1.0 + (-x).exp()));
-        entity.memory = brain_outputs.slice(s![params.signal_size..params.signal_size + params.memory_size]).to_owned();
+        entity.memory = brain_outputs
+            .slice(s![
+                params.signal_size..params.signal_size + params.memory_size
+            ])
+            .to_owned();
         entity.rot += brain_outputs[brain_outputs.len() - 2]; // rotation adjustment
 
         // update age
         entity.age += dt;
 
         let vel = brain_outputs[brain_outputs.len() - 1]; // acceleration
-        // println!("Organism {}: acc = {}, rot = {}, energy = {}", 
+        // println!("Organism {}: acc = {}, rot = {}, energy = {}",
         //     entity.id, acc, entity.rot, entity.energy);
-        let vel_vector = Array1::from_vec(vec![
-            vel * entity.rot.cos(),
-            vel * entity.rot.sin(),
-        ]) * 40.0; // scale acceleration
+        let vel_vector =
+            Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()]) * 40.0; // scale acceleration
 
         entity.pos += &(&vel_vector * dt); // update velocity
         entity.energy -= vel.abs() * dt * params.move_energy_rate; // energy consumption for acceleration
@@ -272,7 +253,7 @@ pub fn step(state : &State, params : &Params, dt : f32){
                 panic!("Error finding food neighbors: {:?}", e);
             }
         };
-        
+
         // consume all food within BODY_RADIUS
         for (_, food_id) in food_neighbors.iter() {
             let food_item = &mut state.food[**food_id];
@@ -286,12 +267,10 @@ pub fn step(state : &State, params : &Params, dt : f32){
                 // println!("Organism {} consumed food at {:?}", entity.id, food_item.pos);
             }
         }
-
     });
 }
 
-pub fn spawn(state : &State, params : &Params){
-    
+pub fn spawn(state: &State, params: &Params) {
     // sort organisms by score in descending order
     state.organisms.sort_by(|a, b| b.score.cmp(&a.score));
 
@@ -299,7 +278,6 @@ pub fn spawn(state : &State, params : &Params){
 
     // spawn new organisms if there are less than N_ORGANISMS
     if state.organisms.len() < params.n_organism {
-
         let mut new_organism = organism::init_random_organism(
             state.generation as usize,
             &center,
@@ -316,10 +294,9 @@ pub fn spawn(state : &State, params : &Params){
 
         // choose reproduction strategy randomly
 
-        let reproduction_strategy = rand::rng().random_range(0, 2); 
+        let reproduction_strategy = rand::rng().random_range(0, 2);
 
         if reproduction_strategy == 2 {
-            
             // pick a random organism to reproduce
             let id_a = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
             let id_b = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
@@ -337,9 +314,7 @@ pub fn spawn(state : &State, params : &Params){
 
             // set the new organism's brain to the crossover brain
             new_organism.brain = crossover_brain;
-
         } else if reproduction_strategy == 1 {
-
             let id = rand::rng().random_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
 
             let parent = &state.organisms[id];
@@ -354,7 +329,7 @@ pub fn spawn(state : &State, params : &Params){
 
             // set the new organism's brain to the cloned brain
             new_organism.brain = cloned_brain;
-        } 
+        }
         state.organisms.push(new_organism);
     }
 
