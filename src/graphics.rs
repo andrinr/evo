@@ -17,7 +17,7 @@ pub fn draw_food(state: &evolution::State, params: &evolution::Params) {
     });
 }
 pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
-    state.organisms.par_iter_mut().for_each(|entity| {
+    state.organisms.par_iter().for_each(|entity| {
         draw_circle(
             entity.pos[0],
             entity.pos[1],
@@ -45,7 +45,7 @@ pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
         draw_rectangle(
             health_bar_x,
             health_bar_y,
-            health_bar_width * (entity.energy / 1.0).max(0.0).min(1.0),
+            health_bar_width * (entity.energy / 1.0).clamp(0.0, 1.0),
             health_bar_height,
             Color::from_rgba(255, 0, 0, 255),
         );

@@ -68,8 +68,8 @@ pub fn get_vision_vectors(
     for &angle in angles.iter() {
         let angle_rad = organism.rot + angle;
         let vision_vector = Array1::from_vec(vec![
-            angle_rad.cos() as f32 * vision_length,
-            angle_rad.sin() as f32 * vision_length,
+            angle_rad.cos() * vision_length,
+            angle_rad.sin() * vision_length,
         ]);
         vectors.push(vision_vector);
     }

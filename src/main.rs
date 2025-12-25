@@ -68,11 +68,11 @@ async fn main() {
         clear_background(WHITE);
 
         if let Some(ref mut state) = state {
-            evolution::step(&state, &params, 0.01);
-            evolution::spawn(&state, &params);
+            evolution::step(state, &params, 0.01);
+            evolution::spawn(state, &params);
 
-            graphics::draw_food(&state, &params);
-            graphics::draw_organisms(&state, &params);
+            graphics::draw_food(state, &params);
+            graphics::draw_organisms(state, &params);
         }
 
         next_frame().await

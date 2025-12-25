@@ -3,13 +3,13 @@ use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 
 #[derive(Debug, Clone)]
-pub struct MLP {
+pub struct Mlp {
     pub weights: Array2<f32>,
     pub biases: Array1<f32>,
 }
 
-pub fn init_mlp(input_size: usize, output_size: usize, scale: f32) -> MLP {
-    MLP {
+pub fn init_mlp(input_size: usize, output_size: usize, scale: f32) -> Mlp {
+    Mlp {
         weights: Array2::random((output_size, input_size), Uniform::new(-scale, scale)),
         biases: Array1::random(output_size, Uniform::new(-scale, scale)),
     }
@@ -17,7 +17,7 @@ pub fn init_mlp(input_size: usize, output_size: usize, scale: f32) -> MLP {
 
 #[derive(Debug, Clone)]
 pub struct Brain {
-    pub layers: Vec<MLP>,
+    pub layers: Vec<Mlp>,
 }
 
 pub fn think(brain: &Brain, inputs: &Array1<f32>) -> Array1<f32> {
@@ -41,7 +41,7 @@ pub fn crossover(brain_1: &Brain, brain_2: &Brain) -> Brain {
         let new_weights = &layer_1.weights * 0.5 + &layer_2.weights * 0.5;
         let new_biases = &layer_1.biases * 0.5 + &layer_2.biases * 0.5;
 
-        new_layers.push(MLP {
+        new_layers.push(Mlp {
             weights: new_weights,
             biases: new_biases,
         });
