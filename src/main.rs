@@ -1,9 +1,5 @@
-use geo::Distance;
 use macroquad::prelude::*;
-use ndarray::{Array1, s};
-
-use kdtree::KdTree;
-use geo::{Line, Euclidean, Point};
+use ndarray::{Array1};
 
 mod brain;
 mod organism;
@@ -31,16 +27,9 @@ const N_FOOD: usize = 800;
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
 
-    let mut kd_tree_orgs = KdTree::new(2);
-    let mut kd_tree_food = KdTree::new(2);
-
     let mut genesis = true;
 
     let mut state : evolution::State;
-
-    let mut screen_center = Array1::zeros(2);
-
-    println!("Starting evolutionary organisms simulation");
 
     let layer_sizes = vec![
         (SIGNAL_SIZE + 1) * NUM_VISION_DIRECTIONS + MEMORY_SIZE + 1, // input size
@@ -48,7 +37,26 @@ async fn main() {
         SIGNAL_SIZE + MEMORY_SIZE + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
-    let mut max_id = 0;
+    let params = evolution::Params {
+        body_radius: 3.0,
+        vision_radius: 30.0,
+        idle_energy_rate: 0.009,
+        move_energy_rate: 0.0001,
+        rot_energy_rate: 0.0001,
+        num_vision_directions: 3,
+        fov: std::f32::consts::PI / 2.0,
+        signal_size: 3,
+        memory_size: 3,
+        n_organism: 150,
+        n_food: 800,
+        box_width : 1.0,
+        box_height : 1.0,
+        layer_sizes
+    };
+
+    let mut screen_center = Array1::zeros(2);
+
+    println!("Starting evolutionary organisms simulation");
 
     loop {
         
@@ -75,14 +83,7 @@ async fn main() {
 
                 genesis = false;
 
-                evolution = evolution::init(
-                    N_ORGANISMS,
-                    N_FOOD,
-                    &screen_center,
-                    SIGNAL_SIZE,
-                    MEMORY_SIZE,
-                    layer_sizes
-                )
+                state = evolution::init(&params)
             }
             next_frame().await;
             continue;
@@ -90,119 +91,15 @@ async fn main() {
 
         clear_background(WHITE);
 
-        // Clone the organisms vector
-        let new_organisms = organisms.clone();
+        if let Some(ref mut state) = state {
+            
+            evolution::step(&state, &params, 0.01);
+            evolution::spawn(&state, &params);
 
-        state = evolution::step(state);
+            graphics::draw_food(&state, &params);
+            graphics::draw_organisms(&state, &params);
 
-
-        graphics::draw_food(state);
-        graphics::draw_food(state);
-
-
-        // Update the organisms vector to keep only the ones that are still alive
-        organisms.retain(|entity| entity.energy > 0.0);
-        food.retain(|food_item| food_item.energy > 0.0);
-
-        // sort organisms by score in descending order
-        organisms.sort_by(|a, b| b.score.cmp(&a.score));
-
-        // spawn new organisms if there are less than N_ORGANISMS
-        if organisms.len() < N_ORGANISMS {
-
-            let mut new_organism = organism::init_random_organism(
-                max_id,
-                &screen_center, 
-                // INIT_VELOCITY,
-                SIGNAL_SIZE,
-                MEMORY_SIZE,
-                layer_sizes.clone(),
-            );
-
-            let mutation_scale = rand::gen_range(0.002, 0.2);
-
-            println!("mutation scale: {}", mutation_scale);
-
-            // choose reproduction strategy randomly
-
-            let reproduction_strategy = rand::gen_range(0, 2); 
-
-            if reproduction_strategy == 2 {
-                
-                // pick a random organism to reproduce
-                let id_a = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
-                let id_b = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
-
-                let parent_1 = &organisms[id_a];
-                let parent_2 = &organisms[id_b];
-
-                let mut crossover_brain = brain::crossover(&parent_1.brain, &parent_2.brain);
-
-                brain::mutate_brain(
-                    // pass as mutable
-                    &mut crossover_brain,
-                    0.1, // mutation rate
-                );
-
-                // set the new organism's brain to the crossover brain
-                new_organism.brain = crossover_brain;
-
-            } else if reproduction_strategy == 1 {
-
-                let id = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
-
-                let parent = &organisms[id];
-
-                // clone the parent's brain
-                let mut cloned_brain = parent.brain.clone();
-
-                brain::mutate_brain(
-                    &mut cloned_brain,
-                    mutation_scale, // mutation rate
-                );
-
-                // set the new organism's brain to the cloned brain
-                new_organism.brain = cloned_brain;
-            } 
-
-            max_id += 1; // increment max_id for the new organism
-
-            kd_tree_orgs.add(
-                new_organism.pos.to_vec(),
-                organisms.len(),
-            ).unwrap();
-
-            organisms.push(new_organism);
         }
-
-        // spawn new food if there are less than N_FOOD
-        if food.len() < N_FOOD {
-            let food_item = food::init_random_food(food.len(), &screen_center);
-            kd_tree_food.add(
-                food_item.pos.to_vec(),
-                food.len(),
-            ).unwrap();
-            food.push(food_item);
-        }
-
-
-        // Update the kdtree with the new positions of the organisms
-        kd_tree_orgs = KdTree::new(2);
-        for (i, org_item) in organisms.iter().enumerate() {
-            kd_tree_orgs.add(
-                org_item.pos.to_vec(),
-                i as usize,
-            ).unwrap();
-        };
-
-        // Update the kdtree with the new positions of the food
-        kd_tree_food = KdTree::new(2);
-        for (i, food_item) in food.iter().enumerate() {
-            kd_tree_food.add(
-                food_item.pos.to_vec(),
-                i as usize,
-            ).unwrap();
-        };   
 
         next_frame().await
     }

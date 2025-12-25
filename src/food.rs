@@ -2,7 +2,7 @@ use ndarray::{Array1};
 use ndarray_rand::{RandomExt};
 use ndarray_rand::rand_distr::Uniform;
 
-
+#[derive(Debug, Clone)]
 pub struct Food {
     pub id: usize,
     pub pos: Array1<f32>,

@@ -5,6 +5,7 @@ use crate::brain;
 
 use kdtree::KdTree;
 use kdtree::distance::squared_euclidean;
+use rand::Rng;
 use ndarray::{Array1, s};
 use rayon::prelude::*;
 use geo::{Line, Euclidean, Point};
@@ -32,20 +33,18 @@ pub struct Params {
    n_food : usize,
    box_width : f32,
    box_height : f32,
-   layer_sizes
+   layer_sizes : Vec<usize>,
 }
 
 
 pub fn init(
-    center : &Array1<f32>,
-    layer_sizes : &Vec<usize>,
     params : &Params
 ) -> State {
     
     let mut organisms = Vec::with_capacity(params.n_organism);
     let mut food = Vec::with_capacity(params.n_food);
 
-    let center = Array1::from_vec(vec![params.box_width / 2, params.box_height / 2]);
+    let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
     for i in 0.. params.n_organism {
 
@@ -54,7 +53,7 @@ pub fn init(
             &center, 
             params.signal_size,
             params.memory_size,
-            layer_sizes.clone()
+            params.layer_sizes.clone()
         );
 
         organisms.push(entity);
@@ -71,11 +70,11 @@ pub fn init(
         organisms,
         food, 
         time : 0.,
-        generation : params.n_organism
+        generation : params.n_organism as u32
     }
 }
 
-type Tree2D = KdTree<f32, usize, [f32; 2]>;
+type Tree2D = KdTree<f32, usize, Vec<f32>>;
 
 fn build_trees(state : &State) -> (Tree2D, Tree2D){
 
@@ -113,22 +112,22 @@ fn line_circle_distance(
 }
 
 
-fn wrap_around(v: &Array1<f32>, screen_width : f32, screen_height : f32) -> Array1<f32> {
+fn wrap_around(v: &Array1<f32>, box_width : f32, box_height : f32) -> Array1<f32> {
     let mut wrapped = v.clone();
     if wrapped[0] < 0.0 {
-        wrapped[0] += screen_width;
-    } else if wrapped[0] > screen_width {
-        wrapped[0] -= screen_width;   
+        wrapped[0] += box_width;
+    } else if wrapped[0] > box_width {
+        wrapped[0] -= box_width;   
     }
     if wrapped[1] < 0.0 {
-        wrapped[1] += screen_height;
-    } else if wrapped[1] > screen_height {
-        wrapped[1] -= screen_height;
+        wrapped[1] += box_height;
+    } else if wrapped[1] > box_height {
+        wrapped[1] -= box_height;
     }
     wrapped
 }
 
-pub fn step(state : &State, params : &Params, dt : f32) -> State{
+pub fn step(state : &State, params : &Params, dt : f32){
 
     let (kd_tree_orgs, kd_tree_food) = build_trees(&state);
     
@@ -145,7 +144,7 @@ pub fn step(state : &State, params : &Params, dt : f32) -> State{
         );
         
         // wrap around the screen
-        entity.pos = wrap_around(&entity.pos);
+        entity.pos = wrap_around(&entity.pos, params.box_width, params.box_width);
 
         entity.energy -= params.idle_energy_rate * dt; // energy consumption
 
@@ -295,37 +294,37 @@ pub fn spawn(state : &State, params : &Params){
     // sort organisms by score in descending order
     state.organisms.sort_by(|a, b| b.score.cmp(&a.score));
 
-    let center = Array1::from_vec(vec![params.box_width / 2, params.box_height / 2]);
+    let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
     // spawn new organisms if there are less than N_ORGANISMS
     if state.organisms.len() < params.n_organism {
 
         let mut new_organism = organism::init_random_organism(
-            state.generation,
+            state.generation as usize,
             &center,
             params.signal_size,
             params.memory_size,
-            layer_sizes.clone(),
+            params.layer_sizes.clone(),
         );
 
         state.generation += 1;
 
-        let mutation_scale = rand::gen_range(0.002, 0.2);
+        let mutation_scale = rand::rng().gen_range(0.002, 0.2);
 
         println!("mutation scale: {}", mutation_scale);
 
         // choose reproduction strategy randomly
 
-        let reproduction_strategy = rand::gen_range(0, 2); 
+        let reproduction_strategy = rand::rng().gen_range(0, 2); 
 
         if reproduction_strategy == 2 {
             
             // pick a random organism to reproduce
-            let id_a = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
-            let id_b = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
+            let id_a = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
+            let id_b = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
 
-            let parent_1 = &organisms[id_a];
-            let parent_2 = &organisms[id_b];
+            let parent_1 = &state.organisms[id_a];
+            let parent_2 = &state.organisms[id_b];
 
             let mut crossover_brain = brain::crossover(&parent_1.brain, &parent_2.brain);
 
@@ -340,9 +339,9 @@ pub fn spawn(state : &State, params : &Params){
 
         } else if reproduction_strategy == 1 {
 
-            let id = rand::gen_range(0, organisms.len() / 10); // pick from the top 10% of organisms
+            let id = rand::rng().gen_range(0, state.organisms.len() / 10); // pick from the top 10% of organisms
 
-            let parent = &organisms[id];
+            let parent = &state.organisms[id];
 
             // clone the parent's brain
             let mut cloned_brain = parent.brain.clone();
@@ -355,15 +354,12 @@ pub fn spawn(state : &State, params : &Params){
             // set the new organism's brain to the cloned brain
             new_organism.brain = cloned_brain;
         } 
-
-        max_id += 1; // increment max_id for the new organism
-
         state.organisms.push(new_organism);
     }
 
     // spawn new food if there are less than N_FOOD
-    if food.len() < params.n_food {
-        let food_item = food::init_random_food(food.len(), &screen_center);
+    if state.food.len() < params.n_food {
+        let food_item = food::init_random_food(state.food.len(), &center);
         state.food.push(food_item);
     }
 }
