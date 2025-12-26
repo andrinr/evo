@@ -131,6 +131,7 @@ dependencies = [
  "ndarray",
  "ndarray-rand",
  "rand 0.9.1",
+ "rayon",
 ]
 
 [[package]]
