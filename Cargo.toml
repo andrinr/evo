@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-macroquad = "0.4"
+macroquad = "0.4.14"
+egui-macroquad = "0.17.3"
+egui_plot = "0.31"
 ndarray = "0.16.0"
 ndarray-rand = "0.15.0"
 kdtree = "0.7.0"

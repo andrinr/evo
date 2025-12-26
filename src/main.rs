@@ -2,12 +2,14 @@ use macroquad::prelude::*;
 
 mod graphics;
 mod simulation;
+mod ui;
 
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
     let mut genesis = true;
 
     let mut ecosystem: Option<simulation::ecosystem::Ecosystem> = None;
+    let mut ui_state = ui::UIState::new();
 
     let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
@@ -90,9 +92,20 @@ async fn main() {
         // Render at display refresh rate (uncapped)
         clear_background(WHITE);
         if let Some(ref eco) = ecosystem {
-            graphics::draw_food(eco, &params);
-            graphics::draw_organisms(eco, &params);
+            // Update hovered organism
+            ui_state.hovered_organism_id =
+                graphics::get_hovered_organism(eco, &params, ui_state.stats_panel_width);
+
+            // Draw simulation
+            graphics::draw_food(eco, &params, ui_state.stats_panel_width);
+            graphics::draw_organisms(eco, &params, ui_state.stats_panel_width);
+
+            // Draw UI
+            ui::draw_ui(&mut ui_state, eco, &params);
         }
+
+        // Process egui rendering
+        ui::process_egui();
 
         next_frame().await
     }
