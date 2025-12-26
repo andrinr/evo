@@ -10,6 +10,12 @@ pub struct EventQueue {
     events: Vec<SimulationEvent>,
 }
 
+impl Default for EventQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventQueue {
     pub fn new() -> Self {
         Self { events: Vec::new() }
