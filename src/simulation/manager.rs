@@ -1,6 +1,7 @@
-use crate::brain;
-use crate::food;
-use crate::organism;
+use super::brain;
+use super::events;
+use super::food;
+use super::organism;
 
 use geo::algorithm::Distance;
 use geo::{Euclidean, Line, Point};
@@ -118,14 +119,16 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
 
     // Clone the organisms vector
     let new_organisms = state.organisms.clone();
-    // let new_food = state.food.clone();
 
-    // Track consumed food items across threads
-    let consumed_food = Mutex::new(Vec::new());
+    let event_queue = Mutex::new(events::EventQueue::new());
 
     state.time += dt;
 
+    // parallel phase, only apply updates to entity itself
+    // for events involing other objects, use the event queue for thread safety
     state.organisms.par_iter_mut().for_each(|entity| {
+        let mut local_events = Vec::new();
+
         let vision_vectors = organism::get_vision_vectors(
             entity,
             params.fov,
@@ -172,6 +175,7 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
         for (i, vision_vector) in vision_vectors.iter().enumerate() {
             let end_point = &entity.pos + vision_vector;
             let mut min_distance = f32::MAX;
+
             // detect neighbor organisms within the vision vector
             for (_, neighbor_id) in neighbors_orgs.iter() {
                 let neighbor_org = &new_organisms[**neighbor_id];
@@ -232,8 +236,7 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
         entity.age += dt;
 
         let vel = brain_outputs[brain_outputs.len() - 1]; // acceleration
-        // println!("Organism {}: acc = {}, rot = {}, energy = {}",
-        //     entity.id, acc, entity.rot, entity.energy);
+
         let vel_vector =
             Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()]) * 40.0; // scale acceleration
 
@@ -242,22 +245,8 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
         entity.energy -= entity.rot.abs() * dt * params.rot_energy_rate; // energy consumption for rotation
         entity.energy -= params.idle_energy_rate * dt; // additional energy consumption
 
-        // handle food consumption
-        let food_neighbors = kd_tree_food.within(
-            &entity.pos.to_vec(),
-            (params.body_radius * 2.0).powi(2),
-            &squared_euclidean,
-        );
-
-        let food_neighbors = match food_neighbors {
-            Ok(neighbors) => neighbors,
-            Err(e) => {
-                panic!("Error finding food neighbors: {:?}", e);
-            }
-        };
-
         // consume all food within BODY_RADIUS
-        for (_, food_id) in food_neighbors.iter() {
+        for (_, food_id) in neighbor_foods.iter() {
             let food_item = &state.food[**food_id];
             if food_item.energy > 0.0 {
                 entity.energy += food_item.energy; // consume the food
@@ -265,18 +254,23 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
                 entity.energy = entity.energy.min(1.0);
                 entity.score += 1; // increase score for reproduction
 
-                // Record this food as consumed
-                consumed_food.lock().unwrap().push(**food_id);
-
-                // println!("Organism {} consumed food at {:?}", entity.id, food_item.pos);
+                local_events.push(events::SimulationEvent::FoodConsumed {
+                    organism_id: entity.id,
+                    food_id: **food_id,
+                });
             }
+        }
+
+        let mut queue = event_queue.lock().unwrap();
+        for event in local_events {
+            queue.push(event);
         }
     });
 
-    // Mark all consumed food as depleted
-    for food_id in consumed_food.lock().unwrap().iter() {
-        state.food[*food_id].energy = 0.0;
-    }
+    events::apply_events(state, params, event_queue.into_inner().unwrap());
+
+    state.organisms.retain(|entity| entity.energy > 0.0);
+    state.food.retain(|food_item| food_item.energy > 0.0);
 }
 
 pub fn spawn(state: &mut State, params: &Params) {

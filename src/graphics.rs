@@ -1,8 +1,8 @@
-use crate::evolution;
+use crate::simulation;
 
 use macroquad::prelude::*;
 
-pub fn draw_food(state: &evolution::State, params: &evolution::Params) {
+pub fn draw_food(state: &simulation::manager::State, params: &simulation::manager::Params) {
     let screen_w = screen_width();
     let screen_h = screen_height();
     let scale_x = screen_w / params.box_width;
@@ -21,7 +21,7 @@ pub fn draw_food(state: &evolution::State, params: &evolution::Params) {
         }
     });
 }
-pub fn draw_organisms(state: &evolution::State, params: &evolution::Params) {
+pub fn draw_organisms(state: &simulation::manager::State, params: &simulation::manager::Params) {
     let screen_w = screen_width();
     let screen_h = screen_height();
     let scale_x = screen_w / params.box_width;

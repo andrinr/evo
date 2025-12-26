@@ -1,16 +1,13 @@
 use macroquad::prelude::*;
 
-mod brain;
-mod evolution;
-mod food;
 mod graphics;
-mod organism;
+mod simulation;
 
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
     let mut genesis = true;
 
-    let mut state: Option<evolution::State> = None;
+    let mut state: Option<simulation::manager::State> = None;
 
     let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
@@ -22,7 +19,7 @@ async fn main() {
         signal_size + memory_size + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
-    let params = evolution::Params {
+    let params = simulation::manager::Params {
         body_radius: 3.0,
         vision_radius: 30.0,
         idle_energy_rate: 0.009,
@@ -59,7 +56,7 @@ async fn main() {
             if is_key_down(KeyCode::Enter) {
                 genesis = false;
 
-                state = Some(evolution::init(&params));
+                state = Some(simulation::manager::init(&params));
             }
             next_frame().await;
             continue;
@@ -68,8 +65,8 @@ async fn main() {
         clear_background(WHITE);
 
         if let Some(ref mut state) = state {
-            evolution::step(state, &params, 0.01);
-            evolution::spawn(state, &params);
+            simulation::manager::step(state, &params, 0.01);
+            simulation::manager::spawn(state, &params);
 
             graphics::draw_food(state, &params);
             graphics::draw_organisms(state, &params);

@@ -2,7 +2,7 @@ use ndarray::Array1;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 
-use crate::brain;
+use super::brain;
 
 #[derive(Debug, Clone)]
 pub struct Organism {
