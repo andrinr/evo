@@ -1,17 +1,69 @@
 use crate::simulation;
 use egui_macroquad::egui;
-use egui_plot::{Bar, BarChart, Plot};
+use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
+use std::collections::VecDeque;
+
+const MAX_HISTORY_POINTS: usize = 500;
 
 pub struct UIState {
     pub hovered_organism_id: Option<usize>,
+    pub selected_organism_id: Option<usize>,
     pub stats_panel_width: f32,
+    pub avg_age_history: VecDeque<(f64, f64)>,
+    pub avg_score_history: VecDeque<(f64, f64)>,
+    last_update_time: f32,
+    update_interval: f32,
+    pub save_requested: bool,
+    pub load_requested: bool,
+    pub status_message: Option<String>,
 }
 
 impl UIState {
     pub fn new() -> Self {
         Self {
             hovered_organism_id: None,
+            selected_organism_id: None,
             stats_panel_width: 300.0,
+            avg_age_history: VecDeque::new(),
+            avg_score_history: VecDeque::new(),
+            last_update_time: 0.0,
+            update_interval: 0.5, // Update every 0.5 seconds
+            save_requested: false,
+            load_requested: false,
+            status_message: None,
+        }
+    }
+
+    pub fn set_last_update_time(&mut self, time: f32) {
+        self.last_update_time = time;
+    }
+
+    pub fn update_history(&mut self, ecosystem: &simulation::ecosystem::Ecosystem) {
+        if ecosystem.time - self.last_update_time >= self.update_interval {
+            self.last_update_time = ecosystem.time;
+
+            if !ecosystem.organisms.is_empty() {
+                let avg_age: f32 = ecosystem.organisms.iter().map(|o| o.age).sum::<f32>()
+                    / ecosystem.organisms.len() as f32;
+                let avg_score: f32 = ecosystem
+                    .organisms
+                    .iter()
+                    .map(|o| o.score as f32)
+                    .sum::<f32>()
+                    / ecosystem.organisms.len() as f32;
+
+                self.avg_age_history
+                    .push_back((ecosystem.time as f64, avg_age as f64));
+                self.avg_score_history
+                    .push_back((ecosystem.time as f64, avg_score as f64));
+
+                if self.avg_age_history.len() > MAX_HISTORY_POINTS {
+                    self.avg_age_history.pop_front();
+                }
+                if self.avg_score_history.len() > MAX_HISTORY_POINTS {
+                    self.avg_score_history.pop_front();
+                }
+            }
         }
     }
 }
@@ -25,18 +77,27 @@ pub fn draw_ui(
         // Right-side stats panel
         draw_stats_panel(egui_ctx, state, ecosystem, params);
 
-        // Hover detail panel (if organism is hovered)
-        if let Some(org_id) = state.hovered_organism_id
-            && let Some(organism) = ecosystem.organisms.iter().find(|o| o.id == org_id)
-        {
-            draw_organism_detail_panel(egui_ctx, organism, params);
+        // Detail panel - show selected organism, or hovered if nothing selected
+        let display_id = state.selected_organism_id.or(state.hovered_organism_id);
+        if let Some(org_id) = display_id {
+            if let Some(organism) = ecosystem.organisms.iter().find(|o| o.id == org_id) {
+                draw_organism_detail_panel(
+                    egui_ctx,
+                    organism,
+                    params,
+                    state.selected_organism_id.is_some(),
+                );
+            } else if state.selected_organism_id == Some(org_id) {
+                // Selected organism died, clear selection
+                state.selected_organism_id = None;
+            }
         }
     });
 }
 
 fn draw_stats_panel(
     egui_ctx: &egui::Context,
-    state: &UIState,
+    state: &mut UIState,
     ecosystem: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,
 ) {
@@ -45,6 +106,23 @@ fn draw_stats_panel(
         .resizable(true)
         .show(egui_ctx, |ui| {
             ui.heading("Simulation Stats");
+            ui.separator();
+
+            // Save/Load buttons
+            ui.horizontal(|ui| {
+                if ui.button("💾 Save").clicked() {
+                    state.save_requested = true;
+                }
+                if ui.button("📂 Load").clicked() {
+                    state.load_requested = true;
+                }
+            });
+
+            // Show status message if any
+            if let Some(ref msg) = state.status_message {
+                ui.label(msg);
+            }
+
             ui.separator();
 
             ui.label(format!("Time: {:.1}s", ecosystem.time));
@@ -88,6 +166,29 @@ fn draw_stats_panel(
 
                 ui.separator();
 
+                // Time series plots
+                ui.heading("Average Age Over Time");
+                draw_time_series_plot(
+                    ui,
+                    "avg_age_plot",
+                    &state.avg_age_history,
+                    "Time (s)",
+                    "Avg Age",
+                );
+
+                ui.separator();
+
+                ui.heading("Average Score Over Time");
+                draw_time_series_plot(
+                    ui,
+                    "avg_score_plot",
+                    &state.avg_score_history,
+                    "Time (s)",
+                    "Avg Score",
+                );
+
+                ui.separator();
+
                 // Age distribution plot
                 ui.heading("Age Distribution");
                 draw_age_histogram(ui, &ecosystem.organisms);
@@ -105,11 +206,22 @@ fn draw_organism_detail_panel(
     egui_ctx: &egui::Context,
     organism: &simulation::organism::Organism,
     _params: &simulation::ecosystem::Params,
+    is_selected: bool,
 ) {
-    egui::Window::new(format!("Organism #{}", organism.id))
+    let title = if is_selected {
+        format!("Organism #{} [SELECTED]", organism.id)
+    } else {
+        format!("Organism #{} (hover)", organism.id)
+    };
+
+    egui::Window::new(title)
         .default_pos([20.0, 20.0])
         .resizable(true)
         .show(egui_ctx, |ui| {
+            if is_selected {
+                ui.label("Click elsewhere to deselect");
+                ui.separator();
+            }
             ui.label(format!("Age: {:.2}", organism.age));
             ui.label(format!("Energy: {:.3}", organism.energy));
             ui.label(format!("Score: {}", organism.score));
@@ -244,6 +356,32 @@ fn draw_memory_bars(ui: &mut egui::Ui, memory: &ndarray::Array1<f32>) {
             ui.add_space(5.0);
         }
     });
+}
+
+fn draw_time_series_plot(
+    ui: &mut egui::Ui,
+    id: &str,
+    data: &VecDeque<(f64, f64)>,
+    x_label: &str,
+    y_label: &str,
+) {
+    if data.is_empty() {
+        ui.label("Collecting data...");
+        return;
+    }
+
+    let points: PlotPoints = data.iter().map(|&(x, y)| [x, y]).collect();
+    let line = Line::new(points);
+
+    Plot::new(id)
+        .height(150.0)
+        .show_axes([true, true])
+        .label_formatter(|_name, value| {
+            format!("{}: {:.1}\n{}: {:.2}", x_label, value.x, y_label, value.y)
+        })
+        .show(ui, |plot_ui| {
+            plot_ui.line(line);
+        });
 }
 
 pub fn process_egui() {

@@ -2,14 +2,14 @@ use crate::simulation;
 use macroquad::prelude::*;
 use ndarray::Array1;
 
-pub fn get_hovered_organism(
+fn get_organism_at_mouse(
     ecosystem: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,
     ui_panel_width: f32,
 ) -> Option<usize> {
     let (mouse_x, mouse_y) = mouse_position();
 
-    // Don't detect hover if mouse is over UI panel
+    // Don't detect if mouse is over UI panel
     if mouse_x > screen_width() - ui_panel_width {
         return None;
     }
@@ -37,6 +37,26 @@ pub fn get_hovered_organism(
     }
 
     None
+}
+
+pub fn get_hovered_organism(
+    ecosystem: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) -> Option<usize> {
+    get_organism_at_mouse(ecosystem, params, ui_panel_width)
+}
+
+pub fn handle_organism_click(
+    ecosystem: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) -> Option<usize> {
+    if is_mouse_button_pressed(MouseButton::Left) {
+        get_organism_at_mouse(ecosystem, params, ui_panel_width)
+    } else {
+        None
+    }
 }
 
 trait ToScreen {

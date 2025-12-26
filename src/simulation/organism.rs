@@ -1,10 +1,11 @@
 use ndarray::Array1;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
+use serde::{Deserialize, Serialize};
 
 use super::brain;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Organism {
     pub id: usize,
     pub age: f32,

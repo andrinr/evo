@@ -10,9 +10,10 @@ use kdtree::{ErrorKind as KdTreeError, KdTree};
 use ndarray::{Array1, s};
 use rand::Rng;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Params {
     pub body_radius: f32,
     pub vision_radius: f32,
@@ -31,7 +32,7 @@ pub struct Params {
     pub layer_sizes: Vec<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ecosystem {
     pub organisms: Vec<organism::Organism>,
     pub food: Vec<food::Food>,
@@ -286,6 +287,18 @@ impl Ecosystem {
             let food_item = food::Food::new_random(&center);
             self.food.push(food_item);
         }
+    }
+
+    pub fn save_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let json = std::fs::read_to_string(path)?;
+        let ecosystem = serde_json::from_str(&json)?;
+        Ok(ecosystem)
     }
 }
 

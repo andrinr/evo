@@ -91,7 +91,97 @@ async fn main() {
 
         // Render at display refresh rate (uncapped)
         clear_background(WHITE);
-        if let Some(ref eco) = ecosystem {
+        if let Some(ref mut eco) = ecosystem {
+            // Handle keyboard shortcuts
+            if is_key_pressed(KeyCode::S)
+                && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
+            {
+                ui_state.save_requested = true;
+            }
+            if is_key_pressed(KeyCode::L)
+                && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
+            {
+                ui_state.load_requested = true;
+            }
+
+            // Handle save request
+            if ui_state.save_requested {
+                ui_state.save_requested = false;
+                let save_path = format!(
+                    "evolution_save_{}.json",
+                    chrono::Local::now().format("%Y%m%d_%H%M%S")
+                );
+                match eco.save_to_file(&save_path) {
+                    Ok(_) => {
+                        ui_state.status_message = Some(format!("✓ Saved to {}", save_path));
+                        println!("Saved evolution state to {}", save_path);
+                    }
+                    Err(e) => {
+                        ui_state.status_message = Some(format!("✗ Save failed: {}", e));
+                        eprintln!("Failed to save: {}", e);
+                    }
+                }
+            }
+
+            // Handle load request
+            if ui_state.load_requested {
+                ui_state.load_requested = false;
+                // Find the most recent save file
+                if let Ok(entries) = std::fs::read_dir(".") {
+                    let mut save_files: Vec<_> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.path()
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|s| s.starts_with("evolution_save_") && s.ends_with(".json"))
+                                .unwrap_or(false)
+                        })
+                        .collect();
+
+                    save_files.sort_by_key(|e| std::cmp::Reverse(e.path().clone()));
+
+                    if let Some(latest_file) = save_files.first() {
+                        let load_path = latest_file.path();
+                        match simulation::ecosystem::Ecosystem::load_from_file(
+                            load_path.to_str().unwrap(),
+                        ) {
+                            Ok(loaded_eco) => {
+                                *eco = loaded_eco;
+                                ui_state.status_message =
+                                    Some(format!("✓ Loaded from {}", load_path.display()));
+                                println!("Loaded evolution state from {}", load_path.display());
+                                // Clear history as it's from a different timeline
+                                ui_state.avg_age_history.clear();
+                                ui_state.avg_score_history.clear();
+                                ui_state.set_last_update_time(eco.time);
+                            }
+                            Err(e) => {
+                                ui_state.status_message = Some(format!("✗ Load failed: {}", e));
+                                eprintln!("Failed to load: {}", e);
+                            }
+                        }
+                    } else {
+                        ui_state.status_message = Some("✗ No save files found".to_string());
+                    }
+                }
+            }
+
+            // Update history data
+            ui_state.update_history(eco);
+
+            // Handle organism click (select/deselect)
+            if let Some(clicked_id) =
+                graphics::handle_organism_click(eco, &params, ui_state.stats_panel_width)
+            {
+                // Toggle selection: if clicking the same organism, deselect it
+                if ui_state.selected_organism_id == Some(clicked_id) {
+                    ui_state.selected_organism_id = None;
+                } else {
+                    ui_state.selected_organism_id = Some(clicked_id);
+                }
+            }
+
             // Update hovered organism
             ui_state.hovered_organism_id =
                 graphics::get_hovered_organism(eco, &params, ui_state.stats_panel_width);

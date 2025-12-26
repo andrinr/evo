@@ -1,8 +1,9 @@
 use ndarray::{Array1, Array2};
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mlp {
     pub weights: Array2<f32>,
     pub biases: Array1<f32>,
@@ -42,7 +43,7 @@ impl Mlp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Brain {
     pub layers: Vec<Mlp>,
 }
