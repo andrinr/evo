@@ -29,14 +29,20 @@ async fn main() {
         fov: std::f32::consts::PI / 2.0,
         signal_size,
         memory_size,
-        n_organism: 150,
+        n_organism: 500,
         n_food: 800,
-        box_width: 1.0,
-        box_height: 1.0,
+        box_width: 1000.0,
+        box_height: 1000.0,
         layer_sizes,
     };
 
     println!("Starting evolutionary organisms simulation");
+
+    // Simulation timing
+    let simulation_fps = 60.0; // How many simulation steps per second
+    let simulation_dt = 1.0 / simulation_fps;
+    let mut accumulator = 0.0;
+    let mut last_time = get_time();
 
     loop {
         if genesis {
@@ -55,19 +61,34 @@ async fn main() {
 
             if is_key_down(KeyCode::Enter) {
                 genesis = false;
-
                 state = Some(simulation::manager::init(&params));
+                last_time = get_time(); // Reset time when starting
             }
             next_frame().await;
             continue;
         }
 
-        clear_background(WHITE);
+        // Calculate delta time since last frame
+        let current_time = get_time();
+        let frame_time = (current_time - last_time) as f32;
+        last_time = current_time;
 
+        // Accumulate time for fixed timestep updates
+        accumulator += frame_time;
+
+        // Run simulation at fixed timestep
         if let Some(ref mut state) = state {
-            simulation::manager::step(state, &params, 0.01);
-            simulation::manager::spawn(state, &params);
+            // Update simulation as many times as needed to catch up
+            while accumulator >= simulation_dt {
+                simulation::manager::step(state, &params, simulation_dt);
+                simulation::manager::spawn(state, &params);
+                accumulator -= simulation_dt;
+            }
+        }
 
+        // Render at display refresh rate (uncapped)
+        clear_background(WHITE);
+        if let Some(ref state) = state {
             graphics::draw_food(state, &params);
             graphics::draw_organisms(state, &params);
         }
