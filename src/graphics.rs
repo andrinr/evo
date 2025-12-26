@@ -4,12 +4,12 @@ use ndarray::Array1;
 
 trait ToScreen {
     type Output;
-    fn to_screen(&self, params: &simulation::logic::Params) -> Self::Output;
+    fn to_screen(&self, params: &simulation::ecosystem::Params) -> Self::Output;
 }
 
 impl ToScreen for Array1<f32> {
     type Output = Array1<f32>;
-    fn to_screen(&self, params: &simulation::logic::Params) -> Array1<f32> {
+    fn to_screen(&self, params: &simulation::ecosystem::Params) -> Array1<f32> {
         let screen_w = screen_width();
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -20,7 +20,7 @@ impl ToScreen for Array1<f32> {
 
 impl ToScreen for f32 {
     type Output = f32;
-    fn to_screen(&self, params: &simulation::logic::Params) -> f32 {
+    fn to_screen(&self, params: &simulation::ecosystem::Params) -> f32 {
         let screen_w = screen_width();
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -30,7 +30,7 @@ impl ToScreen for f32 {
     }
 }
 
-pub fn draw_food(state: &simulation::logic::State, params: &simulation::logic::Params) {
+pub fn draw_food(state: &simulation::ecosystem::Ecosystem, params: &simulation::ecosystem::Params) {
     // draw food
     state.food.iter().for_each(|entity| {
         if entity.energy > 0.0 {
@@ -46,7 +46,10 @@ pub fn draw_food(state: &simulation::logic::State, params: &simulation::logic::P
     });
 }
 
-pub fn draw_organisms(state: &simulation::logic::State, params: &simulation::logic::Params) {
+pub fn draw_organisms(
+    state: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+) {
     state.organisms.iter().for_each(|entity| {
         let screen_pos = entity.pos.to_screen(params);
         let screen_radius = params.body_radius.to_screen(params);
@@ -121,8 +124,7 @@ pub fn draw_organisms(state: &simulation::logic::State, params: &simulation::log
             BLACK,
         );
 
-        let vision_vectors = simulation::organism::get_vision_vectors(
-            entity,
+        let vision_vectors = entity.get_vision_vectors(
             params.fov,
             params.num_vision_directions,
             params.vision_radius,

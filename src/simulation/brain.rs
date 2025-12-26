@@ -8,10 +8,37 @@ pub struct Mlp {
     pub biases: Array1<f32>,
 }
 
-pub fn init_mlp(input_size: usize, output_size: usize, scale: f32) -> Mlp {
-    Mlp {
-        weights: Array2::random((output_size, input_size), Uniform::new(-scale, scale)),
-        biases: Array1::random(output_size, Uniform::new(-scale, scale)),
+impl Mlp {
+    pub fn new_random(input_size: usize, output_size: usize, scale: f32) -> Self {
+        Self {
+            weights: Array2::random((output_size, input_size), Uniform::new(-scale, scale)),
+            biases: Array1::random(output_size, Uniform::new(-scale, scale)),
+        }
+    }
+
+    pub fn forward(&self, inputs: &Array1<f32>) -> Array1<f32> {
+        // Dot product of weights and inputs, plus biases
+        let output = self.weights.dot(inputs) + &self.biases;
+        // Activation function (tanh)
+        output.mapv(|x| x.tanh())
+    }
+
+    pub fn mutate(&mut self, mutation_scale: f32) {
+        self.weights += &Array2::random(
+            self.weights.dim(),
+            Uniform::new(-mutation_scale, mutation_scale),
+        );
+        self.biases += &Array1::random(
+            self.biases.len(),
+            Uniform::new(-mutation_scale, mutation_scale),
+        );
+    }
+
+    pub fn crossover(parent1: &Mlp, parent2: &Mlp) -> Self {
+        Self {
+            weights: &parent1.weights * 0.5 + &parent2.weights * 0.5,
+            biases: &parent1.biases * 0.5 + &parent2.biases * 0.5,
+        }
     }
 }
 
@@ -20,45 +47,39 @@ pub struct Brain {
     pub layers: Vec<Mlp>,
 }
 
-pub fn think(brain: &Brain, inputs: &Array1<f32>) -> Array1<f32> {
-    let mut output = inputs.clone();
+impl Brain {
+    pub fn new(layer_sizes: &[usize], scale: f32) -> Self {
+        let layers = (0..layer_sizes.len() - 1)
+            .map(|i| Mlp::new_random(layer_sizes[i], layer_sizes[i + 1], scale))
+            .collect();
 
-    for layer in &brain.layers {
-        // Dot product of weights and inputs, plus biases
-        output = layer.weights.dot(&output) + &layer.biases;
-        // Activation function (tanh)
-        output = output.map(|x| x.tanh());
+        Self { layers }
     }
 
-    output
-}
+    pub fn think(&self, inputs: &Array1<f32>) -> Array1<f32> {
+        let mut output = inputs.clone();
 
-pub fn crossover(brain_1: &Brain, brain_2: &Brain) -> Brain {
-    // Average crossover operartion
-    let mut new_layers = Vec::new();
+        for layer in &self.layers {
+            output = layer.forward(&output);
+        }
 
-    for (layer_1, layer_2) in brain_1.layers.iter().zip(&brain_2.layers) {
-        let new_weights = &layer_1.weights * 0.5 + &layer_2.weights * 0.5;
-        let new_biases = &layer_1.biases * 0.5 + &layer_2.biases * 0.5;
-
-        new_layers.push(Mlp {
-            weights: new_weights,
-            biases: new_biases,
-        });
+        output
     }
 
-    Brain { layers: new_layers }
-}
+    pub fn crossover(parent1: &Brain, parent2: &Brain) -> Self {
+        let new_layers = parent1
+            .layers
+            .iter()
+            .zip(&parent2.layers)
+            .map(|(layer1, layer2)| Mlp::crossover(layer1, layer2))
+            .collect();
 
-pub fn mutate_brain(brain: &mut Brain, mutation_scale: f32) {
-    for layer in &mut brain.layers {
-        layer.weights += &Array2::random(
-            layer.weights.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        layer.biases += &Array1::random(
-            layer.biases.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
+        Self { layers: new_layers }
+    }
+
+    pub fn mutate(&mut self, mutation_scale: f32) {
+        for layer in &mut self.layers {
+            layer.mutate(mutation_scale);
+        }
     }
 }

@@ -8,9 +8,8 @@ use super::brain;
 pub struct Organism {
     pub id: usize,
     pub age: f32,
-    pub score: i32, // score for reproduction
+    pub score: i32,
     pub pos: Array1<f32>,
-    // pub vel: Array1<f32>,
     pub rot: f32,
     pub energy: f32,
     pub signal: Array1<f32>,
@@ -18,61 +17,64 @@ pub struct Organism {
     pub brain: brain::Brain,
 }
 
-pub fn init_random_organism(
-    i: usize,
-    screen_center: &Array1<f32>,
-    // init_velocity : f32,
-    signal_size: usize,
-    memory_size: usize,
-    layer_sizes: Vec<usize>,
-) -> Organism {
-    Organism {
-        id: i,
-        age: 0.0,
-        score: 0, // initial score for reproduction
-        pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
-        // vel: Array1::random(2, Uniform::new(-init_velocity, init_velocity)),
-        // random rotation in radians
-        rot: rand::random::<f32>() * std::f32::consts::PI * 2.,
-        energy: 1.,
-        signal: Array1::random(signal_size, Uniform::new(0.0, 1.0)),
-        memory: Array1::zeros(memory_size),
-        brain: brain::Brain {
-            layers: (0..layer_sizes.len() - 1)
-                .map(|i| {
-                    brain::init_mlp(
-                        layer_sizes[i],
-                        layer_sizes[i + 1],
-                        0.1, // scale for weights and biases
-                    )
-                })
-                .collect(),
-        },
-    }
-}
-
-pub fn get_vision_vectors(
-    organism: &Organism,
-    field_of_view: f32,
-    num_vision_directions: usize,
-    vision_length: f32,
-) -> Vec<Array1<f32>> {
-    let mut angles = Vec::new();
-    let angle_step = field_of_view / (num_vision_directions as f32 - 1.0);
-    for i in 0..num_vision_directions {
-        let angle = -field_of_view / 2.0 + i as f32 * angle_step;
-        angles.push(angle);
-    }
-    let mut vectors = Vec::new();
-
-    for &angle in angles.iter() {
-        let angle_rad = organism.rot + angle;
-        let vision_vector = Array1::from_vec(vec![
-            angle_rad.cos() * vision_length,
-            angle_rad.sin() * vision_length,
-        ]);
-        vectors.push(vision_vector);
+impl Organism {
+    pub fn new_random(
+        id: usize,
+        screen_center: &Array1<f32>,
+        signal_size: usize,
+        memory_size: usize,
+        layer_sizes: Vec<usize>,
+    ) -> Self {
+        Self {
+            id,
+            age: 0.0,
+            score: 0,
+            pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
+            rot: rand::random::<f32>() * std::f32::consts::PI * 2.,
+            energy: 1.0,
+            signal: Array1::random(signal_size, Uniform::new(0.0, 1.0)),
+            memory: Array1::zeros(memory_size),
+            brain: brain::Brain::new(&layer_sizes, 0.1),
+        }
     }
 
-    vectors
+    pub fn is_alive(&self) -> bool {
+        self.energy > 0.0
+    }
+
+    pub fn get_vision_vectors(
+        &self,
+        field_of_view: f32,
+        num_vision_directions: usize,
+        vision_length: f32,
+    ) -> Vec<Array1<f32>> {
+        let angle_step = field_of_view / (num_vision_directions as f32 - 1.0);
+
+        (0..num_vision_directions)
+            .map(|i| {
+                let angle = -field_of_view / 2.0 + i as f32 * angle_step;
+                let angle_rad = self.rot + angle;
+                Array1::from_vec(vec![
+                    angle_rad.cos() * vision_length,
+                    angle_rad.sin() * vision_length,
+                ])
+            })
+            .collect()
+    }
+
+    pub fn age_by(&mut self, dt: f32) {
+        self.age += dt;
+    }
+
+    pub fn consume_energy(&mut self, amount: f32) {
+        self.energy -= amount;
+    }
+
+    pub fn gain_energy(&mut self, amount: f32, max_energy: f32) {
+        self.energy = (self.energy + amount).min(max_energy);
+    }
+
+    pub fn kill(&mut self) {
+        self.energy = 0.0;
+    }
 }

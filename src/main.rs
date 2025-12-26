@@ -7,7 +7,7 @@ mod simulation;
 async fn main() {
     let mut genesis = true;
 
-    let mut state: Option<simulation::logic::State> = None;
+    let mut ecosystem: Option<simulation::ecosystem::Ecosystem> = None;
 
     let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
@@ -19,7 +19,7 @@ async fn main() {
         signal_size + memory_size + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
-    let params = simulation::logic::Params {
+    let params = simulation::ecosystem::Params {
         body_radius: 3.0,
         vision_radius: 30.0,
         idle_energy_rate: 0.023,
@@ -30,10 +30,10 @@ async fn main() {
         fov: std::f32::consts::PI / 2.0,
         signal_size,
         memory_size,
-        n_organism: 5000,
+        n_organism: 500,
         n_food: 400,
-        box_width: 10000.0,
-        box_height: 10000.0,
+        box_width: 1000.0,
+        box_height: 1000.0,
         layer_sizes,
     };
 
@@ -62,7 +62,7 @@ async fn main() {
 
             if is_key_down(KeyCode::Enter) {
                 genesis = false;
-                state = Some(simulation::logic::init(&params));
+                ecosystem = Some(simulation::ecosystem::Ecosystem::new(&params));
                 last_time = get_time(); // Reset time when starting
             }
             next_frame().await;
@@ -78,20 +78,20 @@ async fn main() {
         accumulator += frame_time;
 
         // Run simulation at fixed timestep
-        if let Some(ref mut state) = state {
+        if let Some(ref mut eco) = ecosystem {
             // Update simulation as many times as needed to catch up
             while accumulator >= simulation_dt {
-                simulation::logic::step(state, &params, simulation_dt);
-                simulation::logic::spawn(state, &params);
+                eco.step(&params, simulation_dt);
+                eco.spawn(&params);
                 accumulator -= simulation_dt;
             }
         }
 
         // Render at display refresh rate (uncapped)
         clear_background(WHITE);
-        if let Some(ref state) = state {
-            graphics::draw_food(state, &params);
-            graphics::draw_organisms(state, &params);
+        if let Some(ref eco) = ecosystem {
+            graphics::draw_food(eco, &params);
+            graphics::draw_organisms(eco, &params);
         }
 
         next_frame().await

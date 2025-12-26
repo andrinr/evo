@@ -1,4 +1,4 @@
-use super::logic::{Params, State};
+use super::ecosystem::{Ecosystem, Params};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ impl EventQueue {
     }
 }
 
-pub fn apply_events(state: &mut State, _params: &Params, mut queue: EventQueue) {
+pub fn apply_events(state: &mut Ecosystem, _params: &Params, mut queue: EventQueue) {
     // Track which food items are contested
     let mut food_claims: HashMap<usize, Vec<usize>> = HashMap::new();
 
@@ -41,16 +41,16 @@ pub fn apply_events(state: &mut State, _params: &Params, mut queue: EventQueue) 
 
     // Resolve food consumption - first come first served
     for (food_id, claimants) in food_claims {
-        if state.food[food_id].energy <= 0.0 {
+        if state.food[food_id].is_consumed() {
             continue;
         }
 
         if let Some(&winner_id) = claimants.first() {
             if let Some(org) = state.organisms.iter_mut().find(|o| o.id == winner_id) {
-                org.energy = (org.energy + state.food[food_id].energy).min(1.0);
+                org.gain_energy(state.food[food_id].energy, 1.0);
                 org.score += 1;
             }
-            state.food[food_id].energy = 0.0;
+            state.food[food_id].consume();
         }
     }
 }
