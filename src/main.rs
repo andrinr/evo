@@ -7,7 +7,7 @@ mod simulation;
 async fn main() {
     let mut genesis = true;
 
-    let mut state: Option<simulation::manager::State> = None;
+    let mut state: Option<simulation::logic::State> = None;
 
     let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
@@ -19,27 +19,28 @@ async fn main() {
         signal_size + memory_size + 2, // output size (signal + memory + rotation + acceleration)
     ];
 
-    let params = simulation::manager::Params {
+    let params = simulation::logic::Params {
         body_radius: 3.0,
         vision_radius: 30.0,
-        idle_energy_rate: 0.009,
-        move_energy_rate: 0.0001,
-        rot_energy_rate: 0.0001,
+        idle_energy_rate: 0.023,
+        move_energy_rate: 0.0002,
+        move_multiplier: 60.0,
+        rot_energy_rate: 0.0003,
         num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
         signal_size,
         memory_size,
-        n_organism: 500,
-        n_food: 800,
-        box_width: 1000.0,
-        box_height: 1000.0,
+        n_organism: 5000,
+        n_food: 400,
+        box_width: 10000.0,
+        box_height: 10000.0,
         layer_sizes,
     };
 
     println!("Starting evolutionary organisms simulation");
 
     // Simulation timing
-    let simulation_fps = 60.0; // How many simulation steps per second
+    let simulation_fps = 20.0; // How many simulation steps per second
     let simulation_dt = 1.0 / simulation_fps;
     let mut accumulator = 0.0;
     let mut last_time = get_time();
@@ -61,7 +62,7 @@ async fn main() {
 
             if is_key_down(KeyCode::Enter) {
                 genesis = false;
-                state = Some(simulation::manager::init(&params));
+                state = Some(simulation::logic::init(&params));
                 last_time = get_time(); // Reset time when starting
             }
             next_frame().await;
@@ -80,8 +81,8 @@ async fn main() {
         if let Some(ref mut state) = state {
             // Update simulation as many times as needed to catch up
             while accumulator >= simulation_dt {
-                simulation::manager::step(state, &params, simulation_dt);
-                simulation::manager::spawn(state, &params);
+                simulation::logic::step(state, &params, simulation_dt);
+                simulation::logic::spawn(state, &params);
                 accumulator -= simulation_dt;
             }
         }

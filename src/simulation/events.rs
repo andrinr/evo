@@ -1,4 +1,4 @@
-use super::manager::{Params, State};
+use super::logic::{Params, State};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

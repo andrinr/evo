@@ -26,6 +26,7 @@ pub struct Params {
     pub vision_radius: f32,
     pub idle_energy_rate: f32,
     pub move_energy_rate: f32,
+    pub move_multiplier: f32,
     pub rot_energy_rate: f32,
     pub num_vision_directions: usize,
     pub fov: f32,
@@ -237,8 +238,8 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
 
         let vel = brain_outputs[brain_outputs.len() - 1]; // acceleration
 
-        let vel_vector =
-            Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()]) * 40.0; // scale acceleration
+        let vel_vector = Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()])
+            * params.move_multiplier; // scale acceleration
 
         entity.pos += &(&vel_vector * dt); // update velocity
         entity.energy -= vel.abs() * dt * params.move_energy_rate; // energy consumption for acceleration
@@ -248,7 +249,8 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
         // consume all food within BODY_RADIUS
         for (_, food_id) in neighbor_foods.iter() {
             let food_item = &state.food[**food_id];
-            if food_item.energy > 0.0 {
+            let org_food_dist = (&entity.pos - &food_item.pos).mapv(|x| x.abs()).sum();
+            if org_food_dist < params.body_radius * 2.0 && food_item.energy > 0.0 {
                 entity.energy += food_item.energy; // consume the food
                 // cap energy to a maximum value
                 entity.energy = entity.energy.min(1.0);
@@ -258,6 +260,8 @@ pub fn step(state: &mut State, params: &Params, dt: f32) {
                     organism_id: entity.id,
                     food_id: **food_id,
                 });
+
+                println!("org {} consumed {}", entity.id, food_id);
             }
         }
 

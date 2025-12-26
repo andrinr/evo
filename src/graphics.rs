@@ -4,12 +4,12 @@ use ndarray::Array1;
 
 trait ToScreen {
     type Output;
-    fn to_screen(&self, params: &simulation::manager::Params) -> Self::Output;
+    fn to_screen(&self, params: &simulation::logic::Params) -> Self::Output;
 }
 
 impl ToScreen for Array1<f32> {
     type Output = Array1<f32>;
-    fn to_screen(&self, params: &simulation::manager::Params) -> Array1<f32> {
+    fn to_screen(&self, params: &simulation::logic::Params) -> Array1<f32> {
         let screen_w = screen_width();
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -20,7 +20,7 @@ impl ToScreen for Array1<f32> {
 
 impl ToScreen for f32 {
     type Output = f32;
-    fn to_screen(&self, params: &simulation::manager::Params) -> f32 {
+    fn to_screen(&self, params: &simulation::logic::Params) -> f32 {
         let screen_w = screen_width();
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -30,7 +30,7 @@ impl ToScreen for f32 {
     }
 }
 
-pub fn draw_food(state: &simulation::manager::State, params: &simulation::manager::Params) {
+pub fn draw_food(state: &simulation::logic::State, params: &simulation::logic::Params) {
     // draw food
     state.food.iter().for_each(|entity| {
         if entity.energy > 0.0 {
@@ -46,7 +46,7 @@ pub fn draw_food(state: &simulation::manager::State, params: &simulation::manage
     });
 }
 
-pub fn draw_organisms(state: &simulation::manager::State, params: &simulation::manager::Params) {
+pub fn draw_organisms(state: &simulation::logic::State, params: &simulation::logic::Params) {
     state.organisms.iter().for_each(|entity| {
         let screen_pos = entity.pos.to_screen(params);
         let screen_radius = params.body_radius.to_screen(params);
@@ -127,23 +127,25 @@ pub fn draw_organisms(state: &simulation::manager::State, params: &simulation::m
             params.num_vision_directions,
             params.vision_radius,
         );
-        // // organism memory, simple rectangles
-        // let memory_bar_width = 20.0;
-        // let memory_bar_height = 3.0;
-        // let memory_bar_x = entity.pos[0] - memory_bar_width / 2.0;
-        // let memory_bar_y = entity.pos[1] - BODY_RADIUS - health_bar_height - memory_bar_height - 2.0;
-        // for (i, &value) in entity.memory.iter().enumerate() {
-        //     let color_value = (value * 255.0) as u8;
-        //     draw_rectangle(
-        //         memory_bar_x + i as f32 * (memory_bar_width / MEMORY_SIZE as f32),
-        //         memory_bar_y,
-        //         memory_bar_width / MEMORY_SIZE as f32,
-        //         memory_bar_height,
-        //         Color::from_rgba(color_value, color_value, color_value, 200)
-        //     );
-        // }
+        // organism memory, simple rectangles
 
-        for (_i, vision_vector) in vision_vectors.iter().enumerate() {
+        let memory_bar_width = 20.0;
+        let memory_bar_height = 3.0;
+        let memory_bar_x = screen_pos[0] - memory_bar_width / 2.0;
+        let memory_bar_y =
+            screen_pos[1] - screen_radius - health_bar_height - memory_bar_height - 2.0;
+        for (i, &value) in entity.memory.iter().enumerate() {
+            let color_value = (value * 255.0) as u8;
+            draw_rectangle(
+                memory_bar_x + i as f32 * (memory_bar_width / params.memory_size as f32),
+                memory_bar_y,
+                memory_bar_width / params.memory_size as f32,
+                memory_bar_height,
+                Color::from_rgba(color_value, color_value, color_value, 200),
+            );
+        }
+
+        for vision_vector in vision_vectors.iter() {
             let end_point = &screen_pos + vision_vector.to_screen(params);
             // draw a line from the organism's position to the end point of the vision vector
             draw_line(
