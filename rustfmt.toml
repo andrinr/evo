@@ -1,0 +1,15 @@
+# Rust code formatting configuration
+# Run with: cargo fmt
+
+# Edition to use (should match Cargo.toml)
+edition = "2021"
+
+# Maximum line width
+max_width = 100
+
+# Indentation
+tab_spaces = 4
+
+# Formatting improvements (stable features only)
+use_field_init_shorthand = true
+use_try_shorthand = true

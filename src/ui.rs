@@ -11,6 +11,8 @@ pub struct UIState {
     pub stats_panel_width: f32,
     pub avg_age_history: VecDeque<(f64, f64)>,
     pub avg_score_history: VecDeque<(f64, f64)>,
+    pub organism_count_history: VecDeque<(f64, f64)>,
+    pub food_count_history: VecDeque<(f64, f64)>,
     last_update_time: f32,
     update_interval: f32,
     pub save_requested: bool,
@@ -26,6 +28,8 @@ impl UIState {
             stats_panel_width: 300.0,
             avg_age_history: VecDeque::new(),
             avg_score_history: VecDeque::new(),
+            organism_count_history: VecDeque::new(),
+            food_count_history: VecDeque::new(),
             last_update_time: 0.0,
             update_interval: 0.5, // Update every 0.5 seconds
             save_requested: false,
@@ -41,6 +45,12 @@ impl UIState {
     pub fn update_history(&mut self, ecosystem: &simulation::ecosystem::Ecosystem) {
         if ecosystem.time - self.last_update_time >= self.update_interval {
             self.last_update_time = ecosystem.time;
+
+            // Track population counts
+            self.organism_count_history
+                .push_back((ecosystem.time as f64, ecosystem.organisms.len() as f64));
+            self.food_count_history
+                .push_back((ecosystem.time as f64, ecosystem.food.len() as f64));
 
             if !ecosystem.organisms.is_empty() {
                 let avg_age: f32 = ecosystem.organisms.iter().map(|o| o.age).sum::<f32>()
@@ -63,6 +73,13 @@ impl UIState {
                 if self.avg_score_history.len() > MAX_HISTORY_POINTS {
                     self.avg_score_history.pop_front();
                 }
+            }
+
+            if self.organism_count_history.len() > MAX_HISTORY_POINTS {
+                self.organism_count_history.pop_front();
+            }
+            if self.food_count_history.len() > MAX_HISTORY_POINTS {
+                self.food_count_history.pop_front();
             }
         }
     }
@@ -187,6 +204,31 @@ fn draw_stats_panel(
                     "Avg Score",
                 );
 
+                ui.separator();
+            }
+
+            // Population plots (shown even when no organisms exist)
+            ui.heading("Organism Population Over Time");
+            draw_time_series_plot(
+                ui,
+                "organism_count_plot",
+                &state.organism_count_history,
+                "Time (s)",
+                "Count",
+            );
+
+            ui.separator();
+
+            ui.heading("Food Population Over Time");
+            draw_time_series_plot(
+                ui,
+                "food_count_plot",
+                &state.food_count_history,
+                "Time (s)",
+                "Count",
+            );
+
+            if !ecosystem.organisms.is_empty() {
                 ui.separator();
 
                 // Age distribution plot

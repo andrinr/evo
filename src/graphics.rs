@@ -115,6 +115,23 @@ pub fn draw_food(
     });
 }
 
+pub fn draw_projectiles(
+    state: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) {
+    state.projectiles.iter().for_each(|projectile| {
+        let screen_pos = projectile.pos.to_screen(params, ui_panel_width);
+        let scaled_radius = params.projectile_radius.to_screen(params, ui_panel_width);
+        draw_circle(
+            screen_pos[0],
+            screen_pos[1],
+            scaled_radius,
+            Color::from_rgba(255, 0, 0, 255),
+        );
+    });
+}
+
 pub fn draw_organisms(
     state: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,

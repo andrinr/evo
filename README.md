@@ -25,3 +25,15 @@ After installing Rust, you can run the code with the following command:
 ```bash
 cargo run
 ```
+
+### Check everything before committing
+make all
+
+### Just format
+make fmt
+
+### Just lint  
+make clippy
+
+### Generate docs
+make doc

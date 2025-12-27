@@ -1,0 +1,14 @@
+# Clippy configuration
+# Run with: cargo clippy
+
+# Avoid extremely short or single-letter names
+disallowed-names = ["foo", "bar", "baz"]
+
+# Minimum cognitive complexity before warning
+cognitive-complexity-threshold = 30
+
+# Warn on functions with too many arguments
+too-many-arguments-threshold = 7
+
+# Warn on types with too many lines
+type-complexity-threshold = 250

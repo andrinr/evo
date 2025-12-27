@@ -9,12 +9,14 @@ fn create_test_params() -> Params {
     let layer_sizes = vec![
         (signal_size + 1) * num_vision_directions + memory_size + 1,
         10,
-        signal_size + memory_size + 2,
+        signal_size + memory_size + 3,
     ];
+
+    let vision_radius = 30.0;
 
     Params {
         body_radius: 3.0,
-        vision_radius: 30.0,
+        vision_radius,
         idle_energy_rate: 0.023,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
@@ -28,6 +30,15 @@ fn create_test_params() -> Params {
         box_width: 1000.0,
         box_height: 1000.0,
         layer_sizes,
+        attack_cost_rate: 0.2,
+        attack_damage_rate: 0.4,
+        attack_cooldown: 1.0,
+        corpse_energy_ratio: 0.8,
+        projectile_speed: vision_radius * 2.0,
+        projectile_range: vision_radius,
+        projectile_radius: 1.0,
+        organism_spawn_rate: 1.0,
+        food_spawn_rate: 1.0,
     }
 }
 
@@ -141,10 +152,11 @@ fn test_organism_death_from_no_energy() {
     let params = create_test_params();
     let mut ecosystem = Ecosystem::new(&params);
 
-    // Drain energy from all organisms
+    // Drain energy from all organisms and remove all food
     for organism in &mut ecosystem.organisms {
         organism.energy = 0.0;
     }
+    ecosystem.food.clear();
 
     ecosystem.step(&params, 0.05);
 
