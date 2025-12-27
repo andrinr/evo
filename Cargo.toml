@@ -3,11 +3,53 @@ name = "evo"
 version = "0.1.0"
 edition = "2024"
 
+[lints.rust]
+# Note: unsafe_code = "forbid" conflicts with ndarray's s! macro
+# We use "warn" instead and carefully review any unsafe usage
+unsafe_code = "warn"
+# Warn on missing docs for public items only
+missing_docs = "warn"
+unused_must_use = "warn"
+
+[lints.clippy]
+# Pedantic lints for code quality (less strict)
+pedantic = { level = "warn", priority = -1 }
+# Performance lints
+perf = { level = "warn", priority = -1 }
+
+# Allow some pedantic lints that are too strict
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Additional pedantic allows
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+missing_const_for_fn = "allow"
+must_use_candidate = "allow"
+# Additional allows for practical code
+too_many_lines = "allow"
+uninlined_format_args = "allow"
+bool_to_int_with_if = "allow"
+needless_pass_by_value = "allow"
+unsafe_derive_deserialize = "allow"
+explicit_iter_loop = "allow"
+cast_lossless = "allow"
+ignored_unit_patterns = "allow"
+map_unwrap_or = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+semicolon_if_nothing_returned = "allow"
+
 [dependencies]
-macroquad = "0.4"
-ndarray = "0.16.0"
+macroquad = "0.4.14"
+egui-macroquad = "0.17.3"
+egui_plot = "0.31"
+ndarray = { version = "0.16.0", features = ["serde"] }
 ndarray-rand = "0.15.0"
 kdtree = "0.7.0"
 geo = "0.30.0"
 rand = "0.9.1"
 rayon = "1.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"

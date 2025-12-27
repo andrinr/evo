@@ -2,15 +2,80 @@ use crate::simulation;
 use macroquad::prelude::*;
 use ndarray::Array1;
 
+fn get_organism_at_mouse(
+    ecosystem: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) -> Option<usize> {
+    let (mouse_x, mouse_y) = mouse_position();
+
+    // Don't detect if mouse is over UI panel
+    if mouse_x > screen_width() - ui_panel_width {
+        return None;
+    }
+
+    // Convert mouse position to simulation coordinates
+    let screen_w = screen_width() - ui_panel_width;
+    let screen_h = screen_height();
+    let scale_x = params.box_width / screen_w;
+    let scale_y = params.box_height / screen_h;
+
+    let sim_x = mouse_x * scale_x;
+    let sim_y = mouse_y * scale_y;
+
+    // Find the closest organism within body_radius
+    let mouse_pos = Array1::from_vec(vec![sim_x, sim_y]);
+
+    for organism in &ecosystem.organisms {
+        let distance = (&organism.pos - &mouse_pos)
+            .mapv(|x| x.powi(2))
+            .sum()
+            .sqrt();
+        if distance < params.body_radius {
+            return Some(organism.id);
+        }
+    }
+
+    None
+}
+
+pub fn get_hovered_organism(
+    ecosystem: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) -> Option<usize> {
+    get_organism_at_mouse(ecosystem, params, ui_panel_width)
+}
+
+pub fn handle_organism_click(
+    ecosystem: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) -> Option<usize> {
+    if is_mouse_button_pressed(MouseButton::Left) {
+        get_organism_at_mouse(ecosystem, params, ui_panel_width)
+    } else {
+        None
+    }
+}
+
 trait ToScreen {
     type Output;
-    fn to_screen(&self, params: &simulation::ecosystem::Params) -> Self::Output;
+    fn to_screen(
+        &self,
+        params: &simulation::ecosystem::Params,
+        ui_panel_width: f32,
+    ) -> Self::Output;
 }
 
 impl ToScreen for Array1<f32> {
     type Output = Array1<f32>;
-    fn to_screen(&self, params: &simulation::ecosystem::Params) -> Array1<f32> {
-        let screen_w = screen_width();
+    fn to_screen(
+        &self,
+        params: &simulation::ecosystem::Params,
+        ui_panel_width: f32,
+    ) -> Array1<f32> {
+        let screen_w = screen_width() - ui_panel_width;
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
         let scale_y = screen_h / params.box_height;
@@ -20,8 +85,8 @@ impl ToScreen for Array1<f32> {
 
 impl ToScreen for f32 {
     type Output = f32;
-    fn to_screen(&self, params: &simulation::ecosystem::Params) -> f32 {
-        let screen_w = screen_width();
+    fn to_screen(&self, params: &simulation::ecosystem::Params, ui_panel_width: f32) -> f32 {
+        let screen_w = screen_width() - ui_panel_width;
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
         let scale_y = screen_h / params.box_height;
@@ -30,12 +95,16 @@ impl ToScreen for f32 {
     }
 }
 
-pub fn draw_food(state: &simulation::ecosystem::Ecosystem, params: &simulation::ecosystem::Params) {
+pub fn draw_food(
+    state: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) {
     // draw food
     state.food.iter().for_each(|entity| {
         if entity.energy > 0.0 {
-            let screen_pos = entity.pos.to_screen(params);
-            let scaled_radius = params.body_radius.to_screen(params);
+            let screen_pos = entity.pos.to_screen(params, ui_panel_width);
+            let scaled_radius = params.body_radius.to_screen(params, ui_panel_width);
             draw_circle(
                 screen_pos[0],
                 screen_pos[1],
@@ -46,13 +115,31 @@ pub fn draw_food(state: &simulation::ecosystem::Ecosystem, params: &simulation::
     });
 }
 
+pub fn draw_projectiles(
+    state: &simulation::ecosystem::Ecosystem,
+    params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
+) {
+    state.projectiles.iter().for_each(|projectile| {
+        let screen_pos = projectile.pos.to_screen(params, ui_panel_width);
+        let scaled_radius = params.projectile_radius.to_screen(params, ui_panel_width);
+        draw_circle(
+            screen_pos[0],
+            screen_pos[1],
+            scaled_radius,
+            Color::from_rgba(255, 0, 0, 255),
+        );
+    });
+}
+
 pub fn draw_organisms(
     state: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,
+    ui_panel_width: f32,
 ) {
     state.organisms.iter().for_each(|entity| {
-        let screen_pos = entity.pos.to_screen(params);
-        let screen_radius = params.body_radius.to_screen(params);
+        let screen_pos = entity.pos.to_screen(params, ui_panel_width);
+        let screen_radius = params.body_radius.to_screen(params, ui_panel_width);
 
         draw_circle(
             screen_pos[0],
@@ -148,7 +235,7 @@ pub fn draw_organisms(
         }
 
         for vision_vector in vision_vectors.iter() {
-            let end_point = &screen_pos + vision_vector.to_screen(params);
+            let end_point = &screen_pos + vision_vector.to_screen(params, ui_panel_width);
             // draw a line from the organism's position to the end point of the vision vector
             draw_line(
                 screen_pos[0],
