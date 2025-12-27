@@ -1,5 +1,7 @@
 # Evolutionary Multi Agent MLP Training
 
+![ui](image-1.png)
+
 ![screenshot](thumb_2.gif)
 
 This repository contains code for training multi-layer perceptron (MLP) agents using evolutionary strategies. Each agent has a three pixel input, has a small memory and outputs a rotation and a movement command. The agents are trained to avoid each other and to move towards food.
