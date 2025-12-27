@@ -1,3 +1,6 @@
+#![allow(missing_docs)]
+#![allow(clippy::float_cmp)]
+
 use evo::simulation::ecosystem::{Ecosystem, Params};
 use std::fs;
 
