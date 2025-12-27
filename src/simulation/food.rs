@@ -17,6 +17,8 @@ pub struct Food {
     pub pos: Array1<f32>,
     /// Energy value remaining. Regular food has 1.0, corpses have less based on `corpse_energy_ratio`.
     pub energy: f32,
+    /// Age of the food item in seconds.
+    pub age: f32,
 }
 
 impl Food {
@@ -33,6 +35,7 @@ impl Food {
         Self {
             pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
             energy: 1.0,
+            age: 0.0,
         }
     }
 

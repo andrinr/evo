@@ -10,7 +10,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + memory_size + 1,
+        (signal_size + 1) * num_vision_directions + signal_size + memory_size + 1,
         10,
         signal_size + memory_size + 3,
     ];
@@ -20,6 +20,7 @@ fn create_test_params() -> Params {
     Params {
         body_radius: 3.0,
         vision_radius,
+        scent_radius: 50.0,
         idle_energy_rate: 0.023,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
@@ -29,7 +30,9 @@ fn create_test_params() -> Params {
         signal_size,
         memory_size,
         n_organism: 50,
+        max_organism: 200,
         n_food: 40,
+        max_food: 150,
         box_width: 1000.0,
         box_height: 1000.0,
         layer_sizes,
@@ -42,6 +45,7 @@ fn create_test_params() -> Params {
         projectile_radius: 1.0,
         organism_spawn_rate: 1.0,
         food_spawn_rate: 1.0,
+        food_lifetime: 0.0,
     }
 }
 
@@ -125,7 +129,7 @@ fn test_organism_spawning() {
 
     let initial_count = ecosystem.organisms.len();
 
-    ecosystem.spawn(&params);
+    ecosystem.spawn(&params, 1.0);
 
     // Should spawn one new organism
     assert_eq!(ecosystem.organisms.len(), initial_count + 1);
@@ -144,7 +148,7 @@ fn test_food_spawning() {
 
     let initial_food_count = ecosystem.food.len();
 
-    ecosystem.spawn(&params);
+    ecosystem.spawn(&params, 1.0);
 
     // Should spawn one new food item
     assert_eq!(ecosystem.food.len(), initial_food_count + 1);

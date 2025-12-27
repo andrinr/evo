@@ -41,6 +41,12 @@ pub struct Organism {
     pub brain: brain::Brain,
     /// Cooldown before next attack (seconds).
     pub attack_cooldown: f32,
+    /// Last brain inputs (for visualization purposes).
+    pub last_brain_inputs: Array1<f32>,
+    /// Vision ray angles relative to organism's rotation
+    pub vision_angles: Array1<f32>,
+    /// Vision ray lengths as fraction of max vision radius
+    pub vision_lengths: Array1<f32>,
 }
 
 impl Organism {
@@ -52,14 +58,36 @@ impl Organism {
     /// * `screen_center` - Center point for calculating random position bounds
     /// * `signal_size` - Number of signal outputs (typically 3 for RGB)
     /// * `memory_size` - Number of memory cells
+    /// * `num_vision_directions` - Number of vision rays
+    /// * `fov` - Field of view in radians
+    /// * `max_vision` - Max length of vision vector
     /// * `layer_sizes` - Neural network layer dimensions
     pub fn new_random(
         id: usize,
         screen_center: &Array1<f32>,
         signal_size: usize,
         memory_size: usize,
+        num_vision_directions: usize,
+        max_vision: f32,
+        fov: f32,
         layer_sizes: Vec<usize>,
     ) -> Self {
+        let input_size = layer_sizes[0];
+
+        // Initialize vision angles evenly spread across FOV
+        let mut vision_angles = Array1::zeros(num_vision_directions);
+        for i in 0..num_vision_directions {
+            let angle_offset = if num_vision_directions > 1 {
+                (i as f32 / (num_vision_directions - 1) as f32 - 0.5) * fov
+            } else {
+                0.0
+            };
+            vision_angles[i] = angle_offset;
+        }
+
+        // Initialize vision lengths: center vision is 2x longer than others
+        let vision_lengths = Array1::from_elem(num_vision_directions, max_vision);
+
         Self {
             id,
             age: 0.0,
@@ -71,6 +99,9 @@ impl Organism {
             memory: Array1::zeros(memory_size),
             brain: brain::Brain::new(&layer_sizes, 0.1),
             attack_cooldown: 0.0,
+            last_brain_inputs: Array1::zeros(input_size),
+            vision_angles,
+            vision_lengths,
         }
     }
 
@@ -83,33 +114,22 @@ impl Organism {
         self.energy > 0.0
     }
 
-    /// Calculates vision ray directions based on current rotation and field of view.
+    /// Calculates vision ray directions based on evolved vision parameters.
     ///
     /// # Arguments
     ///
-    /// * `field_of_view` - Total angle of vision in radians
-    /// * `num_vision_directions` - Number of vision rays
-    /// * `vision_length` - Maximum vision distance
+    /// * `max_vision_length` - Maximum vision distance
     ///
     /// # Returns
     ///
     /// Vector of vision ray endpoints relative to organism position.
-    pub fn get_vision_vectors(
-        &self,
-        field_of_view: f32,
-        num_vision_directions: usize,
-        vision_length: f32,
-    ) -> Vec<Array1<f32>> {
-        let angle_step = field_of_view / (num_vision_directions as f32 - 1.0);
-
-        (0..num_vision_directions)
-            .map(|i| {
-                let angle = -field_of_view / 2.0 + i as f32 * angle_step;
+    pub fn get_vision_vectors(&self) -> Vec<Array1<f32>> {
+        self.vision_angles
+            .iter()
+            .zip(self.vision_lengths.iter())
+            .map(|(&angle, &length)| {
                 let angle_rad = self.rot + angle;
-                Array1::from_vec(vec![
-                    angle_rad.cos() * vision_length,
-                    angle_rad.sin() * vision_length,
-                ])
+                Array1::from_vec(vec![angle_rad.cos() * length, angle_rad.sin() * length])
             })
             .collect()
     }

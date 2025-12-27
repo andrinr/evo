@@ -29,6 +29,8 @@ pub struct Params {
     pub body_radius: f32,
     /// Maximum distance organisms can see.
     pub vision_radius: f32,
+    /// Maximum distance organisms can smell food.
+    pub scent_radius: f32,
     /// Energy consumed per second while idle.
     pub idle_energy_rate: f32,
     /// Energy cost per unit of movement.
@@ -47,8 +49,12 @@ pub struct Params {
     pub memory_size: usize,
     /// Target organism population.
     pub n_organism: usize,
+    /// Maximum organism population (hard cap).
+    pub max_organism: usize,
     /// Target food item count.
     pub n_food: usize,
+    /// Maximum food item count (hard cap).
+    pub max_food: usize,
     /// Simulation area width.
     pub box_width: f32,
     /// Simulation area height.
@@ -69,10 +75,12 @@ pub struct Params {
     pub projectile_range: f32,
     /// Projectile collision radius.
     pub projectile_radius: f32,
-    /// Expected organisms spawned per frame (probabilistic).
+    /// Organisms spawned per second when below target population.
     pub organism_spawn_rate: f32,
-    /// Expected food items spawned per frame (probabilistic).
+    /// Food items spawned per second when below target count.
     pub food_spawn_rate: f32,
+    /// Maximum lifetime of food in seconds
+    pub food_lifetime: f32,
 }
 
 /// The main ecosystem containing all simulation state.
@@ -107,6 +115,9 @@ impl Ecosystem {
                 &center,
                 params.signal_size,
                 params.memory_size,
+                params.num_vision_directions,
+                params.vision_radius,
+                params.fov,
                 params.layer_sizes.clone(),
             );
 
@@ -143,11 +154,7 @@ impl Ecosystem {
         self.organisms.par_iter_mut().for_each(|entity| {
             let mut local_events = Vec::new();
 
-            let vision_vectors = entity.get_vision_vectors(
-                params.fov,
-                params.num_vision_directions,
-                params.vision_radius,
-            );
+            let vision_vectors = entity.get_vision_vectors();
 
             // wrap around the screen
             wrap_around_mut(&mut entity.pos, params.box_width, params.box_height);
@@ -181,8 +188,12 @@ impl Ecosystem {
             };
 
             // collect all the signals from neighbor organisms and food
+            // Input structure: [vision rays] + [scent] + [memory] + [energy]
             let mut brain_inputs = Array1::zeros(
-                (params.signal_size + 1) * params.num_vision_directions + params.memory_size + 1,
+                (params.signal_size + 1) * params.num_vision_directions
+                    + params.signal_size // scent inputs (RGB)
+                    + params.memory_size
+                    + 1, // energy
             );
 
             for (i, vision_vector) in vision_vectors.iter().enumerate() {
@@ -226,40 +237,95 @@ impl Ecosystem {
                 }
             }
 
-            let offset = (params.signal_size + 1) * params.num_vision_directions;
-            // Add the organism's own signal to the inputs
+            // Calculate scent: average signal of nearby organisms and food within scent_radius
+            let scent_orgs = kd_tree_orgs
+                .within(
+                    &entity.pos.to_vec(),
+                    params.scent_radius.powi(2),
+                    &squared_euclidean,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("Error finding scent neighbors (orgs): {e:?}");
+                });
+
+            let scent_foods = kd_tree_food
+                .within(
+                    &entity.pos.to_vec(),
+                    params.scent_radius.powi(2),
+                    &squared_euclidean,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("Error finding scent neighbors (food): {e:?}");
+                });
+
+            let mut scent_signal = Array1::zeros(params.signal_size);
+            let mut scent_count = 0;
+
+            // Add organism signals
+            for (_, org_id) in &scent_orgs {
+                let neighbor_org = &new_organisms[**org_id];
+                if neighbor_org.id == entity.id {
+                    continue; // Skip self
+                }
+                // Add all signal components (works for any signal_size)
+                for i in 0..params.signal_size {
+                    scent_signal[i] += neighbor_org.signal[i];
+                }
+                scent_count += 1;
+            }
+
+            // Add food signals
+            for (_, _food_id) in &scent_foods {
+                scent_count += 1;
+                scent_signal[2] += 1.0; // B-channel
+            }
+
+            if scent_count > 0 {
+                scent_signal /= scent_count as f32; // Average
+            }
+
+            let mut offset = (params.signal_size + 1) * params.num_vision_directions;
+            // Add scent to inputs
             brain_inputs
                 .slice_mut(s![offset..offset + params.signal_size])
+                .assign(&scent_signal);
+
+            offset += params.signal_size;
+            // Add the organism's own memory to the inputs
+            brain_inputs
+                .slice_mut(s![offset..offset + params.memory_size])
                 .assign(&entity.memory);
-            brain_inputs[offset + params.signal_size] = entity.energy; // energy
+            brain_inputs[offset + params.memory_size] = entity.energy; // energy
+
+            // Store brain inputs for visualization
+            entity.last_brain_inputs = brain_inputs.clone();
 
             let brain_outputs = entity.brain.think(&brain_inputs);
 
             entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
-            // apply sigmoid activation to the signal
-            entity.signal = entity.signal.mapv(|x| 1.0 / (1.0 + (-x).exp()));
             entity.memory = brain_outputs
                 .slice(s![
                     params.signal_size..params.signal_size + params.memory_size
                 ])
                 .to_owned();
-            entity.rot += brain_outputs[brain_outputs.len() - 3]; // rotation adjustment
+
+            let offset = params.signal_size + params.memory_size;
+            let rot = brain_outputs[offset];
+            entity.rot += rot * dt * 10.0; // rotation adjustment
 
             // update age and cooldown
             entity.age_by(dt);
             entity.update_cooldown(dt);
 
-            let vel = brain_outputs[brain_outputs.len() - 2]; // acceleration
-            let attack_strength = brain_outputs[brain_outputs.len() - 1]; // attack action
-            // Apply sigmoid to attack strength (0 to 1)
-            let attack_strength = 1.0 / (1.0 + (-attack_strength).exp());
+            let vel = brain_outputs[offset + 1]; // acceleration
+            let attack_strength = brain_outputs[offset + 2]; // attack action
 
             let vel_vector = Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()])
                 * params.move_multiplier; // scale acceleration
 
             entity.pos += &(&vel_vector * dt); // update velocity
             entity.consume_energy(vel.abs() * dt * params.move_energy_rate); // energy consumption for acceleration
-            entity.consume_energy(entity.rot.abs() * dt * params.rot_energy_rate); // energy consumption for rotation
+            // entity.consume_energy(rot.abs() * dt * params.rot_energy_rate); // energy consumption for rotation
             entity.consume_energy(params.idle_energy_rate * dt); // additional energy consumption
 
             // Handle attack/projectile shooting (with cooldown check)
@@ -301,13 +367,27 @@ impl Ecosystem {
             }
         });
 
-        // Update projectiles and check for collisions
+        // Update projectiles and check for collisions using KD tree
         let mut projectile_events = Vec::new();
         for (proj_idx, projectile) in self.projectiles.iter_mut().enumerate() {
             projectile.update(dt);
 
-            // Check collision with organisms
-            for organism in &self.organisms {
+            // Use KD tree to find nearby organisms within collision range
+            let collision_radius = params.body_radius + params.projectile_radius;
+            let nearby_organisms = kd_tree_orgs
+                .within(
+                    &projectile.pos.to_vec(),
+                    collision_radius.powi(2),
+                    &squared_euclidean,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("Error finding nearby organisms for projectile: {e:?}");
+                });
+
+            // Check collision with nearby organisms
+            for (_, org_id) in &nearby_organisms {
+                let organism = &self.organisms[**org_id];
+
                 if organism.id == projectile.owner_id {
                     continue; // Don't hit self
                 }
@@ -317,11 +397,12 @@ impl Ecosystem {
                     .sum()
                     .sqrt();
 
-                if distance < params.body_radius + params.projectile_radius {
+                if distance < collision_radius {
                     projectile_events.push(events::SimulationEvent::ProjectileHit {
                         projectile_idx: proj_idx,
                         target_id: organism.id,
                         damage: projectile.damage,
+                        owner_id: projectile.owner_id,
                     });
                     break;
                 }
@@ -351,21 +432,35 @@ impl Ecosystem {
 
         events::apply_events(self, params, event_queue.into_inner().unwrap());
 
+        // Clean up dead organisms and consumed food
         self.organisms.retain(super::organism::Organism::is_alive);
         self.food.retain(|food_item| !food_item.is_consumed());
+
+        // Update food age and remove expired food
+        for food_item in &mut self.food {
+            food_item.age += dt;
+        }
+
+        self.food.retain(|f| f.age < params.food_lifetime);
     }
 
     /// Spawns new organisms through evolution when population is below target.
-    pub fn spawn(&mut self, params: &Params) {
+    ///
+    /// # Arguments
+    /// * `params` - Simulation parameters
+    /// * `dt` - Delta time in seconds (spawn rates are per second)
+    pub fn spawn(&mut self, params: &Params, dt: f32) {
         // sort organisms by score in descending order
         self.organisms.sort_by(|a, b| b.score.cmp(&a.score));
 
         let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
-        // spawn new organisms if there are less than n_organism
-        // Use probabilistic spawning: spawn rate is expected number per call
-        let organisms_needed = params.n_organism.saturating_sub(self.organisms.len()) as f32;
-        let organisms_to_spawn_f = organisms_needed.min(params.organism_spawn_rate);
+        // spawn new organisms if there are less than n_organism (respecting max_organism cap)
+        // Use probabilistic spawning: spawn rate is per second, multiply by dt
+        let current_count = self.organisms.len();
+        let max_allowed = params.max_organism.saturating_sub(current_count);
+
+        let organisms_to_spawn_f = params.organism_spawn_rate * dt;
         let organisms_to_spawn = organisms_to_spawn_f.floor() as usize;
         let spawn_prob = organisms_to_spawn_f.fract();
 
@@ -375,38 +470,50 @@ impl Ecosystem {
             organisms_to_spawn
         };
 
+        // Enforce hard cap
+        let total_organisms_to_spawn = total_organisms_to_spawn.min(max_allowed);
+
         for _ in 0..total_organisms_to_spawn {
             let mut new_organism = organism::Organism::new_random(
                 self.generation as usize,
                 &center,
                 params.signal_size,
                 params.memory_size,
+                params.num_vision_directions,
+                params.vision_radius,
+                params.fov,
                 params.layer_sizes.clone(),
             );
 
             self.generation += 1;
 
-            let mutation_scale = rand::rng().random_range(0.002..0.2);
+            // Logarithmic random sampling for mutation scale
+            let min = 0.0002f32;
+            let max = 0.2f32;
+            let log_min = min.ln();
+            let log_max = max.ln();
+            let log_mutation_scale = rand::rng().random_range(log_min..log_max);
+            let mutation_scale = log_mutation_scale.exp();
 
             println!("mutation scale: {}", mutation_scale);
 
             // choose reproduction strategy randomly
-            let reproduction_strategy = rand::rng().random_range(0..3);
+            let reproduction_strategy = rand::rng().random_range(0..2);
 
-            if reproduction_strategy == 2 && self.organisms.len() >= 10 {
+            if reproduction_strategy == 0 && self.organisms.len() >= 10 {
                 // pick two random organisms to reproduce
-                let id_a = rand::rng().random_range(0..self.organisms.len() / 10); // pick from the top 10% of organisms
+                let id_a = rand::rng().random_range(0..self.organisms.len() / 5); // pick from the top 10% of organisms
                 let id_b = rand::rng().random_range(0..self.organisms.len() / 10); // pick from the top 10% of organisms
 
                 let parent_1 = &self.organisms[id_a];
                 let parent_2 = &self.organisms[id_b];
 
-                let mut crossover_brain = brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
-                crossover_brain.mutate(0.1);
+                let crossover_brain = brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
+                // crossover_brain.mutate(mutation_scale);
 
                 new_organism.brain = crossover_brain;
             } else if reproduction_strategy == 1 && self.organisms.len() >= 10 {
-                let id = rand::rng().random_range(0..self.organisms.len() / 10); // pick from the top 10% of organisms
+                let id = rand::rng().random_range(0..self.organisms.len() / 15); // pick from the top 10% of organisms
 
                 let parent = &self.organisms[id];
 
@@ -418,24 +525,23 @@ impl Ecosystem {
             self.organisms.push(new_organism);
         }
 
-        // spawn new food if there are less than n_food
-        // Use probabilistic spawning: spawn rate is expected number per call
-        let food_needed = params.n_food.saturating_sub(self.food.len());
-
-        if food_needed > 0 {
-            // Always spawn at least the floor amount (limited by what's needed)
-            let base_spawn = params.food_spawn_rate.floor() as usize;
-            let base_spawn = base_spawn.min(food_needed);
+        let current_food_count = self.food.len();
+        let max_allowed_food = params.max_food.saturating_sub(current_food_count);
+        if max_allowed_food > 0 {
+            // Calculate spawn amount based on rate per second
+            let food_to_spawn_f = params.food_spawn_rate * dt;
+            let base_spawn = food_to_spawn_f.floor() as usize;
 
             // Fractional part determines probability of spawning one more
-            let spawn_prob = params.food_spawn_rate.fract();
+            let spawn_prob = food_to_spawn_f.fract();
             let extra = if spawn_prob > 0.0 && rand::rng().random::<f32>() < spawn_prob {
                 1
             } else {
                 0
             };
 
-            let total_food_to_spawn = (base_spawn + extra).min(food_needed);
+            // Enforce hard cap
+            let total_food_to_spawn = (base_spawn + extra).min(max_allowed_food);
 
             for _ in 0..total_food_to_spawn {
                 let food_item = food::Food::new_random(&center);

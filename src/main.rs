@@ -5,6 +5,9 @@
 //! and attacking each other with projectiles.
 
 use macroquad::prelude::*;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 mod graphics;
 mod simulation;
@@ -13,41 +16,47 @@ mod ui;
 fn create_simulation_params() -> simulation::ecosystem::Params {
     let signal_size: usize = 3;
     let num_vision_directions: usize = 3;
-    let memory_size: usize = 3;
+    let memory_size: usize = 8;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + memory_size + 1, // input size
-        10,                                                          // hidden layer size
+        (signal_size + 1) * num_vision_directions + signal_size + memory_size + 1, // input size: vision + scent + memory + energy
+        24,
+        16,                            // hidden layer size
         signal_size + memory_size + 3, // output size (signal + memory + rotation + acceleration + attack)
     ];
 
-    let vision_radius = 30.0;
+    let vision_radius = 50.0;
+    let scent_radius = 60.0; // Larger than vision to smell food from farther away
 
     simulation::ecosystem::Params {
         body_radius: 3.0,
         vision_radius,
-        idle_energy_rate: 0.023,
+        scent_radius,
+        idle_energy_rate: 0.1,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
-        rot_energy_rate: 0.0003,
+        rot_energy_rate: 0.00003,
         num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
         signal_size,
         memory_size,
-        n_organism: 200,
-        n_food: 100,
+        n_organism: 90,
+        max_organism: 150,
+        n_food: 90,
+        max_food: 150,
         box_width: 1000.0,
-        box_height: 1000.0,
+        box_height: 800.0,
         layer_sizes,
-        attack_cost_rate: 0.2,
-        attack_damage_rate: 0.4,
-        attack_cooldown: 1.0,
+        attack_cost_rate: 0.1,
+        attack_damage_rate: 0.6,
+        attack_cooldown: 0.1,
         corpse_energy_ratio: 0.8,
         projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
         projectile_radius: 1.0,
-        organism_spawn_rate: 0.5,
-        food_spawn_rate: 0.01,
+        organism_spawn_rate: 3.0,
+        food_spawn_rate: 4.0,
+        food_lifetime: 20.0, // 0 = unlimited
     }
 }
 
@@ -158,7 +167,7 @@ fn handle_organism_selection(
 
 fn update_and_render(
     eco: &mut simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &mut simulation::ecosystem::Params,
     ui_state: &mut ui::UIState,
 ) {
     handle_keyboard_shortcuts(ui_state);
@@ -181,65 +190,121 @@ fn update_and_render(
     // Handle organism selection
     handle_organism_selection(eco, params, ui_state);
 
-    // Update hovered organism
-    ui_state.hovered_organism_id =
-        graphics::get_hovered_organism(eco, params, ui_state.stats_panel_width);
+    // Auto-select best organism if none selected or if selected one died
+    if ui_state.selected_organism_id.is_none()
+        || !eco
+            .organisms
+            .iter()
+            .any(|o| Some(o.id) == ui_state.selected_organism_id)
+    {
+        // Find organism with highest score
+        if let Some(best_org) = eco.organisms.iter().max_by_key(|o| o.score) {
+            ui_state.selected_organism_id = Some(best_org.id);
+        }
+    }
 
-    // Draw simulation
-    graphics::draw_food(eco, params, ui_state.stats_panel_width);
-    graphics::draw_projectiles(eco, params, ui_state.stats_panel_width);
-    graphics::draw_organisms(eco, params, ui_state.stats_panel_width);
+    // Update hovered organism (only if rendering enabled)
+    if ui_state.rendering_enabled {
+        ui_state.hovered_organism_id =
+            graphics::get_hovered_organism(eco, params, ui_state.stats_panel_width);
 
-    // Draw UI
+        // Draw simulation
+        graphics::draw_food(eco, params, ui_state.stats_panel_width);
+        graphics::draw_projectiles(eco, params, ui_state.stats_panel_width);
+        graphics::draw_organisms(
+            eco,
+            params,
+            ui_state.stats_panel_width,
+            ui_state.selected_organism_id,
+        );
+    }
+
+    // Draw UI (always show UI even when rendering is disabled)
     ui::draw_ui(ui_state, eco, params);
 }
 
 #[macroquad::main("Evolutionary Organisms")]
 async fn main() {
-    let params = create_simulation_params();
+    let params = Arc::new(Mutex::new(create_simulation_params()));
     let mut ui_state = ui::UIState::new();
-    let mut ecosystem: Option<simulation::ecosystem::Ecosystem> = None;
 
     println!("Starting evolutionary organisms simulation");
 
-    // Simulation timing
-    let simulation_fps = 20.0;
-    let simulation_dt = 1.0 / simulation_fps;
-    let mut accumulator = 0.0;
-    let mut last_time = get_time();
+    // Shared ecosystem state wrapped in Arc<Mutex>
+    let ecosystem: Arc<Mutex<Option<simulation::ecosystem::Ecosystem>>> =
+        Arc::new(Mutex::new(None));
+    let ecosystem_clone = ecosystem.clone();
+
+    // Shared simulation speed
+    let simulation_speed: Arc<Mutex<f32>> = Arc::new(Mutex::new(1.0));
+    let speed_clone = simulation_speed.clone();
+
+    // Simulation thread
+    let params_clone = params.clone();
+    thread::spawn(move || {
+        let simulation_fps = 10.0;
+        let simulation_dt = 1.0 / simulation_fps;
+        let base_frame_time = Duration::from_secs_f32(simulation_dt);
+
+        loop {
+            let loop_start = Instant::now();
+
+            // Get current simulation speed and run appropriate number of steps
+            let speed = *speed_clone.lock().unwrap();
+            let steps_to_run = speed.max(0.1).round() as usize;
+
+            let mut eco_lock = ecosystem_clone.lock().unwrap();
+            let params_lock = params_clone.lock().unwrap();
+
+            if let Some(ref mut eco) = *eco_lock {
+                for _ in 0..steps_to_run {
+                    eco.step(&params_lock, simulation_dt);
+                    eco.spawn(&params_lock, simulation_dt);
+                }
+            }
+
+            drop(params_lock);
+            drop(eco_lock);
+
+            // Sleep to maintain base FPS (speed just affects steps per frame)
+            let elapsed = loop_start.elapsed();
+            if elapsed < base_frame_time {
+                thread::sleep(base_frame_time.checked_sub(elapsed).unwrap());
+            }
+        }
+    });
 
     loop {
+        // Update simulation speed from UI
+        {
+            let mut speed_lock = simulation_speed.lock().unwrap();
+            *speed_lock = ui_state.simulation_speed;
+        }
+
+        let mut eco_lock = ecosystem.lock().unwrap();
+
         // Genesis screen
-        if ecosystem.is_none() {
+        if eco_lock.is_none() {
+            drop(eco_lock);
             draw_genesis_screen();
             if is_key_down(KeyCode::Enter) {
-                ecosystem = Some(simulation::ecosystem::Ecosystem::new(&params));
-                last_time = get_time();
+                let mut eco_lock = ecosystem.lock().unwrap();
+                let params_lock = params.lock().unwrap();
+                *eco_lock = Some(simulation::ecosystem::Ecosystem::new(&params_lock));
             }
             next_frame().await;
             continue;
         }
 
-        // Update timing
-        let current_time = get_time();
-        let frame_time = (current_time - last_time) as f32;
-        last_time = current_time;
-        accumulator += frame_time;
-
-        let eco = ecosystem.as_mut().unwrap();
-
-        // Fixed timestep simulation updates
-        while accumulator >= simulation_dt {
-            eco.step(&params, simulation_dt);
-            eco.spawn(&params);
-            accumulator -= simulation_dt;
-        }
-
-        // Render at display refresh rate
+        // Render at display refresh rate (using current state snapshot)
+        let eco = eco_lock.as_mut().unwrap();
+        let mut params_lock = params.lock().unwrap();
         clear_background(WHITE);
-        update_and_render(eco, &params, &mut ui_state);
+        update_and_render(eco, &mut params_lock, &mut ui_state);
         ui::process_egui();
 
+        drop(params_lock);
+        drop(eco_lock);
         next_frame().await
     }
 }

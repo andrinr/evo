@@ -23,7 +23,8 @@ fn get_organism_at_mouse(
     let sim_x = mouse_x * scale_x;
     let sim_y = mouse_y * scale_y;
 
-    // Find the closest organism within body_radius
+    // Find the closest organism within a larger click radius for easier selection
+    let click_radius = params.body_radius * 3.0; // 3x larger for easier clicking
     let mouse_pos = Array1::from_vec(vec![sim_x, sim_y]);
 
     for organism in &ecosystem.organisms {
@@ -31,7 +32,7 @@ fn get_organism_at_mouse(
             .mapv(|x| x.powi(2))
             .sum()
             .sqrt();
-        if distance < params.body_radius {
+        if distance < click_radius {
             return Some(organism.id);
         }
     }
@@ -136,11 +137,35 @@ pub fn draw_organisms(
     state: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,
     ui_panel_width: f32,
+    selected_id: Option<usize>,
 ) {
     state.organisms.iter().for_each(|entity| {
         let screen_pos = entity.pos.to_screen(params, ui_panel_width);
         let screen_radius = params.body_radius.to_screen(params, ui_panel_width);
+        let is_selected = selected_id == Some(entity.id);
 
+        // Draw scent radius (faint circle)
+        let scent_radius_screen = params.scent_radius.to_screen(params, ui_panel_width);
+        draw_circle_lines(
+            screen_pos[0],
+            screen_pos[1],
+            scent_radius_screen,
+            2.0,
+            Color::from_rgba(100, 100, 100, 30),
+        );
+
+        // Highlight selected organism with a bright outline
+        if is_selected {
+            draw_circle_lines(
+                screen_pos[0],
+                screen_pos[1],
+                screen_radius + 3.0,
+                3.0,
+                Color::from_rgba(255, 255, 0, 255),
+            );
+        }
+
+        // Draw organism body
         draw_circle(
             screen_pos[0],
             screen_pos[1],
@@ -175,64 +200,60 @@ pub fn draw_organisms(
         );
 
         // text scaling
-        let font_size = 9.0; // minimum font size of 8
-        let text_spacing = 10.0;
+        let _font_size = 9.0; // minimum font size of 8
+        let _text_spacing = 10.0;
 
-        // organism id
-        let id_text = format!("ID:{}", entity.id);
-        let id_text_size = measure_text(&id_text, None, font_size as u16, 1.0);
-        draw_text(
-            &id_text,
-            screen_pos[0] - id_text_size.width / 2.0,
-            health_bar_y - text_spacing,
-            font_size,
-            BLACK,
-        );
+        // // organism id
+        // let id_text = format!("ID:{}", entity.id);
+        // let id_text_size = measure_text(&id_text, None, font_size as u16, 1.0);
+        // draw_text(
+        //     &id_text,
+        //     screen_pos[0] - id_text_size.width / 2.0,
+        //     health_bar_y - text_spacing,
+        //     font_size,
+        //     BLACK,
+        // );
 
-        // organism age
-        let age_text = format!("Age: {:.1}", entity.age);
-        let age_text_size = measure_text(&age_text, None, font_size as u16, 1.0);
-        draw_text(
-            &age_text,
-            screen_pos[0] - age_text_size.width / 2.0,
-            health_bar_y - text_spacing * 2.0,
-            font_size,
-            BLACK,
-        );
+        // // organism age
+        // let age_text = format!("Age: {:.1}", entity.age);
+        // let age_text_size = measure_text(&age_text, None, font_size as u16, 1.0);
+        // draw_text(
+        //     &age_text,
+        //     screen_pos[0] - age_text_size.width / 2.0,
+        //     health_bar_y - text_spacing * 2.0,
+        //     font_size,
+        //     BLACK,
+        // );
 
-        // organism score
-        let score_text = format!("Score: {}", entity.score);
-        let score_text_size = measure_text(&score_text, None, font_size as u16, 1.0);
-        draw_text(
-            &score_text,
-            screen_pos[0] - score_text_size.width / 2.0,
-            health_bar_y - text_spacing * 3.0,
-            font_size,
-            BLACK,
-        );
+        // // organism score
+        // let score_text = format!("Score: {}", entity.score);
+        // let score_text_size = measure_text(&score_text, None, font_size as u16, 1.0);
+        // draw_text(
+        //     &score_text,
+        //     screen_pos[0] - score_text_size.width / 2.0,
+        //     health_bar_y - text_spacing * 3.0,
+        //     font_size,
+        //     BLACK,
+        // );
 
-        let vision_vectors = entity.get_vision_vectors(
-            params.fov,
-            params.num_vision_directions,
-            params.vision_radius,
-        );
-        // organism memory, simple rectangles
+        let vision_vectors = entity.get_vision_vectors();
+        // // organism memory, simple rectangles
 
-        let memory_bar_width = 20.0;
-        let memory_bar_height = 3.0;
-        let memory_bar_x = screen_pos[0] - memory_bar_width / 2.0;
-        let memory_bar_y =
-            screen_pos[1] - screen_radius - health_bar_height - memory_bar_height - 2.0;
-        for (i, &value) in entity.memory.iter().enumerate() {
-            let color_value = (value * 255.0) as u8;
-            draw_rectangle(
-                memory_bar_x + i as f32 * (memory_bar_width / params.memory_size as f32),
-                memory_bar_y,
-                memory_bar_width / params.memory_size as f32,
-                memory_bar_height,
-                Color::from_rgba(color_value, color_value, color_value, 200),
-            );
-        }
+        // let memory_bar_width = 20.0;
+        // let memory_bar_height = 3.0;
+        // let memory_bar_x = screen_pos[0] - memory_bar_width / 2.0;
+        // let memory_bar_y =
+        //     screen_pos[1] - screen_radius - health_bar_height - memory_bar_height - 2.0;
+        // for (i, &value) in entity.memory.iter().enumerate() {
+        //     let color_value = (value * 255.0) as u8;
+        //     draw_rectangle(
+        //         memory_bar_x + i as f32 * (memory_bar_width / params.memory_size as f32),
+        //         memory_bar_y,
+        //         memory_bar_width / params.memory_size as f32,
+        //         memory_bar_height,
+        //         Color::from_rgba(color_value, color_value, color_value, 200),
+        //     );
+        // }
 
         for vision_vector in vision_vectors.iter() {
             let end_point = &screen_pos + vision_vector.to_screen(params, ui_panel_width);

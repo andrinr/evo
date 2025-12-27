@@ -46,6 +46,8 @@ pub enum SimulationEvent {
         target_id: usize,
         /// Amount of damage to deal.
         damage: f32,
+        /// ID of the organism that fired the projectile.
+        owner_id: usize,
     },
 }
 
@@ -115,10 +117,21 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 projectile_idx,
                 target_id,
                 damage,
+                owner_id,
             } => {
                 // Apply damage to target
+                let mut target_killed = false;
                 if let Some(org) = state.organisms.iter_mut().find(|o| o.id == target_id) {
                     org.consume_energy(damage);
+                    if !org.is_alive() {
+                        target_killed = true;
+                    }
+                }
+                // Award point to attacker if target was killed
+                if target_killed
+                    && let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
+                {
+                    attacker.score += 1;
                 }
                 // Mark projectile for removal
                 projectiles_to_remove.push(projectile_idx);
@@ -155,6 +168,7 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
         let corpse = super::food::Food {
             pos,
             energy: params.corpse_energy_ratio,
+            age: 0.0,
         };
         state.food.push(corpse);
     }

@@ -10,7 +10,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + memory_size + 1,
+        (signal_size + 1) * num_vision_directions + signal_size + memory_size + 1,
         10,
         signal_size + memory_size + 3,
     ];
@@ -20,6 +20,7 @@ fn create_test_params() -> Params {
     Params {
         body_radius: 3.0,
         vision_radius,
+        scent_radius: 50.0,
         idle_energy_rate: 0.023,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
@@ -29,7 +30,9 @@ fn create_test_params() -> Params {
         signal_size,
         memory_size,
         n_organism: 20,
+        max_organism: 100,
         n_food: 15,
+        max_food: 80,
         box_width: 1000.0,
         box_height: 1000.0,
         layer_sizes,
@@ -42,6 +45,7 @@ fn create_test_params() -> Params {
         projectile_radius: 1.0,
         organism_spawn_rate: 1.0,
         food_spawn_rate: 1.0,
+        food_lifetime: 0.0,
     }
 }
 
