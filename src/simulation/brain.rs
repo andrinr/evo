@@ -27,11 +27,15 @@ impl Mlp {
     }
 
     /// Performs forward pass with tanh activation.
+    #[inline]
     pub fn forward(&self, inputs: &Array1<f32>) -> Array1<f32> {
-        // Dot product of weights and inputs, plus biases
-        let output = self.weights.dot(inputs) + &self.biases;
-        // Activation function (tanh)
-        output.mapv(f32::tanh)
+        // SIMD-optimized: dot product uses BLAS when enabled
+        let mut output = self.weights.dot(inputs);
+        output += &self.biases;
+
+        // In-place tanh for better cache locality
+        output.mapv_inplace(f32::tanh);
+        output
     }
 
     /// Mutates weights and biases by adding random noise.
@@ -76,9 +80,11 @@ impl Brain {
     }
 
     /// Runs a forward pass through all layers.
+    #[inline]
     pub fn think(&self, inputs: &Array1<f32>) -> Array1<f32> {
         let mut output = inputs.clone();
 
+        // SIMD-friendly: sequential layer processing
         for layer in &self.layers {
             output = layer.forward(&output);
         }
@@ -103,5 +109,45 @@ impl Brain {
         for layer in &mut self.layers {
             layer.mutate(mutation_scale);
         }
+    }
+
+    /// Calculates the Euclidean distance between two brains.
+    ///
+    /// Returns the sum of squared differences across all weights and biases,
+    /// then takes the square root. This measures how different two neural networks are.
+    pub fn distance(brain1: &Brain, brain2: &Brain) -> f32 {
+        let mut sum_sq = 0.0;
+
+        for (layer1, layer2) in brain1.layers.iter().zip(&brain2.layers) {
+            // Sum squared differences for weights
+            for (w1, w2) in layer1.weights.iter().zip(layer2.weights.iter()) {
+                let diff = w1 - w2;
+                sum_sq += diff * diff;
+            }
+
+            // Sum squared differences for biases
+            for (b1, b2) in layer1.biases.iter().zip(layer2.biases.iter()) {
+                let diff = b1 - b2;
+                sum_sq += diff * diff;
+            }
+        }
+
+        sum_sq.sqrt()
+    }
+
+    /// Flattens all weights and biases into a single vector.
+    ///
+    /// Used for PCA visualization and other analyses that need a flat representation.
+    pub fn to_flat_vector(&self) -> Vec<f32> {
+        let mut flat = Vec::new();
+
+        for layer in &self.layers {
+            // Add all weights
+            flat.extend(layer.weights.iter().copied());
+            // Add all biases
+            flat.extend(layer.biases.iter().copied());
+        }
+
+        flat
     }
 }

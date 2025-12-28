@@ -94,6 +94,9 @@ pub struct Params {
     pub food_spawn_rate: f32,
     /// Maximum lifetime of food in seconds
     pub food_lifetime: f32,
+    /// Number of genetic pools (isolated breeding populations).
+    /// Organisms can only breed within their pool. Range: 1-10.
+    pub num_genetic_pools: usize,
 }
 
 /// The main ecosystem containing all simulation state.
@@ -123,6 +126,8 @@ impl Ecosystem {
         let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
         for i in 0..params.n_organism {
+            // Distribute organisms evenly across genetic pools
+            let pool_id = i % params.num_genetic_pools;
             let entity = organism::Organism::new_random(
                 i,
                 &center,
@@ -132,6 +137,7 @@ impl Ecosystem {
                 params.vision_radius,
                 params.fov,
                 params.layer_sizes.clone(),
+                pool_id,
             );
 
             organisms.push(entity);
@@ -215,9 +221,9 @@ impl Ecosystem {
             };
 
             // collect all the signals from neighbor organisms and food
-            // Input structure: [vision rays] + [scent] + [DNA distance] + [memory] + [energy]
+            // Input structure: [vision rays (distance + pool_match + is_organism)] + [scent (signal)] + [DNA distance] + [memory] + [energy]
             let mut brain_inputs = Array1::zeros(
-                (params.signal_size + 1) * params.num_vision_directions
+                3 * params.num_vision_directions // distance, pool_match, is_organism per ray
                     + params.signal_size + 1 // scent inputs (RGB + DNA distance)
                     + params.memory_size
                     + 1, // energy
@@ -237,10 +243,16 @@ impl Ecosystem {
                     let distance = line_circle_distance(&entity.pos, &end_point, &neighbor_org.pos);
                     if distance < params.body_radius && distance < min_distance {
                         min_distance = distance;
-                        brain_inputs[i * 2] = neighbor_org.signal[0];
-                        brain_inputs[(i * 2) + 1] = neighbor_org.signal[1];
-                        brain_inputs[(i * 2) + 2] = neighbor_org.signal[2];
-                        brain_inputs[(i * 2) + 3] = distance;
+                        let base_idx = 3 * i;
+                        brain_inputs[base_idx] = distance;
+                        // Pool match: 1.0 if same pool, 0.0 if different pool
+                        brain_inputs[base_idx + 1] = if neighbor_org.pool_id == entity.pool_id {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                        // Is organism: 1.0 for organisms, 0.0 for food/projectiles
+                        brain_inputs[base_idx + 2] = 1.0;
                     }
 
                     let org_org_distance = (&entity.pos - &neighbor_org.pos).mapv(f32::abs).sum();
@@ -256,10 +268,10 @@ impl Ecosystem {
                     let distance = line_circle_distance(&entity.pos, &end_point, &food_item.pos);
                     if distance < params.body_radius && distance < min_distance {
                         min_distance = distance;
-                        brain_inputs[(params.signal_size + 1) * i] = 0.0;
-                        brain_inputs[(params.signal_size + 1) * i + 1] = 0.0; // food signal color (green)
-                        brain_inputs[(params.signal_size + 1) * i + 2] = 1.0; // food y position
-                        brain_inputs[(params.signal_size + 1) * i + 3] = distance; // distance to food
+                        let base_idx = 3 * i;
+                        brain_inputs[base_idx] = distance; // distance to food
+                        brain_inputs[base_idx + 1] = 0.0; // no pool match for food
+                        brain_inputs[base_idx + 2] = 0.0; // is_organism = 0 for food
                     }
                 }
 
@@ -276,10 +288,10 @@ impl Ecosystem {
                         line_circle_distance(&entity.pos, &end_point, &projectile_item.pos);
                     if distance < params.projectile_radius && distance < min_distance {
                         min_distance = distance;
-                        brain_inputs[(params.signal_size + 1) * i] = 1.0; // projectile signal color (red)
-                        brain_inputs[(params.signal_size + 1) * i + 1] = 0.0;
-                        brain_inputs[(params.signal_size + 1) * i + 2] = 0.0;
-                        brain_inputs[(params.signal_size + 1) * i + 3] = distance; // distance to projectile
+                        let base_idx = 3 * i;
+                        brain_inputs[base_idx] = distance; // distance to projectile
+                        brain_inputs[base_idx + 1] = 0.0; // no pool match for projectiles
+                        brain_inputs[base_idx + 2] = 0.0; // is_organism = 0 for projectiles
                     }
                 }
             }
@@ -345,7 +357,7 @@ impl Ecosystem {
                 scent_signal /= scent_count as f32; // Average
             }
 
-            let mut offset = (params.signal_size + 1) * params.num_vision_directions;
+            let mut offset = 3 * params.num_vision_directions;
             // Add scent to inputs (signal)
             brain_inputs
                 .slice_mut(s![offset..offset + params.signal_size])
@@ -367,7 +379,6 @@ impl Ecosystem {
             let brain_outputs = entity.brain.think(&brain_inputs);
 
             entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
-            entity.signal[1] = 1.0;
             entity.memory = brain_outputs
                 .slice(s![
                     params.signal_size..params.signal_size + params.memory_size
@@ -448,8 +459,6 @@ impl Ecosystem {
                         organism_id: entity.id,
                         food_id: **food_id,
                     });
-
-                    println!("org {} consumed {}", entity.id, food_id);
                 }
             }
 
@@ -566,6 +575,18 @@ impl Ecosystem {
         let total_organisms_to_spawn = total_organisms_to_spawn.min(max_allowed);
 
         for _ in 0..total_organisms_to_spawn {
+            // Select a random genetic pool for this organism
+            let target_pool_id = rand::rng().random_range(0..params.num_genetic_pools);
+
+            // Get organisms in this pool
+            let pool_organisms: Vec<usize> = self
+                .organisms
+                .iter()
+                .enumerate()
+                .filter(|(_, org)| org.pool_id == target_pool_id)
+                .map(|(idx, _)| idx)
+                .collect();
+
             let mut new_organism = organism::Organism::new_random(
                 self.generation as usize,
                 &center,
@@ -575,6 +596,7 @@ impl Ecosystem {
                 params.vision_radius,
                 params.fov,
                 params.layer_sizes.clone(),
+                target_pool_id,
             );
 
             self.generation += 1;
@@ -587,78 +609,74 @@ impl Ecosystem {
             let log_mutation_scale = rand::rng().random_range(log_min..log_max);
             let mutation_scale = log_mutation_scale.exp();
 
-            println!("mutation scale: {}", mutation_scale);
+            // If pool is empty, seed from other pools
+            if pool_organisms.is_empty() && !self.organisms.is_empty() {
+                // Pick a random organism from any other pool as a seed
+                let seed_idx = rand::rng().random_range(0..self.organisms.len());
+                let seed = &self.organisms[seed_idx];
 
-            // choose reproduction strategy randomly
-            let reproduction_strategy = rand::rng().random_range(0..2);
+                // Clone and mutate the seed organism into the new pool
+                let mut cloned_brain = seed.brain.clone();
+                cloned_brain.mutate(mutation_scale * 2.0); // Extra mutation for diversity
+                new_organism.brain = cloned_brain;
+                new_organism.dna.clone_from(&seed.dna);
+                dna::mutate(&mut new_organism.dna, params.dna_mutation_rate * 2.0);
+            } else if pool_organisms.len() >= 2 {
+                // choose reproduction strategy randomly
+                let reproduction_strategy = rand::rng().random_range(0..2);
 
-            if reproduction_strategy == 0 && self.organisms.len() >= 10 {
-                // Crossover: pick two organisms with probability based on DNA similarity
-                let mut attempts = 0;
-                let max_attempts = 50;
-                let mut found_mate = false;
+                if reproduction_strategy == 0 {
+                    // Crossover: pick two random organisms from top 15% of THIS POOL
+                    let top_count = (pool_organisms.len() as f32 * 0.15).max(2.0) as usize;
+                    let top_count = top_count.min(pool_organisms.len());
 
-                while attempts < max_attempts && !found_mate {
-                    let id_a = rand::rng().random_range(0..self.organisms.len() / 5);
-                    let id_b = rand::rng().random_range(0..self.organisms.len() / 10);
+                    // Pick two different parents from top 15% of pool
+                    let parent_1_pool_idx = rand::rng().random_range(0..top_count);
+                    let mut parent_2_pool_idx = rand::rng().random_range(0..top_count);
 
-                    let parent_1 = &self.organisms[id_a];
-                    let parent_2 = &self.organisms[id_b];
-
-                    // Calculate DNA distance and check if within breeding distance
-                    let dna_distance = dna::periodic_distance(&parent_1.dna, &parent_2.dna);
-
-                    // Accept this pairing if DNA is similar enough (hard cutoff)
-                    if dna_distance < params.dna_breeding_distance {
-                        let crossover_brain =
-                            brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
-                        new_organism.brain = crossover_brain;
-
-                        // Inherit DNA from parents with crossover and mutation
-                        let alpha = rand::rng().random::<f32>();
-                        new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
-                        dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
-
-                        found_mate = true;
+                    // Ensure parents are different
+                    while parent_2_pool_idx == parent_1_pool_idx && top_count > 1 {
+                        parent_2_pool_idx = rand::rng().random_range(0..top_count);
                     }
-                    attempts += 1;
-                }
 
-                println!("attemps {}", attempts);
+                    let parent_1 = &self.organisms[pool_organisms[parent_1_pool_idx]];
+                    let parent_2 = &self.organisms[pool_organisms[parent_2_pool_idx]];
 
-                // If no mate found after attempts, fall back to asexual reproduction
-                if !found_mate && self.organisms.len() >= 10 {
-                    let id = rand::rng().random_range(0..self.organisms.len() / 10);
-                    let parent = &self.organisms[id];
+                    // Perform crossover
+                    let crossover_brain = brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
+                    new_organism.brain = crossover_brain;
+
+                    // Inherit DNA from parents with crossover and mutation
+                    let alpha = rand::rng().random::<f32>();
+                    new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
+                    dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
+                } else if pool_organisms.len() >= 10 {
+                    // Asexual: clone with mutation from THIS POOL
+                    let parent_pool_idx = rand::rng().random_range(0..pool_organisms.len() / 10);
+                    let parent = &self.organisms[pool_organisms[parent_pool_idx]];
+
                     let mut cloned_brain = parent.brain.clone();
                     cloned_brain.mutate(mutation_scale);
                     new_organism.brain = cloned_brain;
-                    new_organism.dna.clone_from(&parent.dna);
 
-                    // Add Gaussian mutation to DNA
+                    // Inherit DNA with mutation
+                    new_organism.dna.clone_from(&parent.dna);
                     for i in 0..2 {
-                        let mutation = rand::rng().random_range(-1.0..1.0)
-                            * mutation_scale
-                            * params.dna_mutation_rate;
+                        let mutation =
+                            rand::rng().random_range(-1.0..1.0) * params.dna_mutation_rate;
                         new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);
                     }
                 }
-            } else if reproduction_strategy == 1 && self.organisms.len() >= 10 {
-                // Asexual: clone with mutation
-                let id = rand::rng().random_range(0..self.organisms.len() / 10);
-                let parent = &self.organisms[id];
-
+            } else if pool_organisms.len() == 1 {
+                // Only one organism in pool - clone and mutate it
+                let parent = &self.organisms[pool_organisms[0]];
                 let mut cloned_brain = parent.brain.clone();
                 cloned_brain.mutate(mutation_scale);
                 new_organism.brain = cloned_brain;
-
-                // Inherit DNA with mutation
                 new_organism.dna.clone_from(&parent.dna);
-                for i in 0..2 {
-                    let mutation = rand::rng().random_range(-1.0..1.0) * params.dna_mutation_rate;
-                    new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);
-                }
+                dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
             }
+
             self.organisms.push(new_organism);
         }
 

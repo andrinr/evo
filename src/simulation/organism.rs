@@ -49,6 +49,8 @@ pub struct Organism {
     pub vision_lengths: Array1<f32>,
     /// DNA vector for breeding compatibility (2D space)
     pub dna: Array1<f32>,
+    /// Genetic pool ID (organisms can only breed within their pool)
+    pub pool_id: usize,
 }
 
 impl Organism {
@@ -64,6 +66,7 @@ impl Organism {
     /// * `fov` - Field of view in radians
     /// * `max_vision` - Max length of vision vector
     /// * `layer_sizes` - Neural network layer dimensions
+    /// * `pool_id` - Genetic pool ID for breeding isolation
     #[allow(clippy::too_many_arguments)]
     pub fn new_random(
         id: usize,
@@ -74,6 +77,7 @@ impl Organism {
         max_vision: f32,
         fov: f32,
         layer_sizes: Vec<usize>,
+        pool_id: usize,
     ) -> Self {
         let input_size = layer_sizes[0];
 
@@ -106,6 +110,7 @@ impl Organism {
             vision_angles,
             vision_lengths,
             dna: Array1::random(2, Uniform::new(0.0, 1.0)),
+            pool_id,
         }
     }
 

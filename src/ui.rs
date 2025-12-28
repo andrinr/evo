@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 
 const MAX_HISTORY_POINTS: usize = 500;
 
+#[allow(clippy::struct_excessive_bools)]
 pub struct UIState {
     pub hovered_organism_id: Option<usize>,
     pub selected_organism_id: Option<usize>,
@@ -14,14 +15,19 @@ pub struct UIState {
     pub organism_count_history: VecDeque<(f64, f64)>,
     pub food_count_history: VecDeque<(f64, f64)>,
     pub projectile_count_history: VecDeque<(f64, f64)>,
+    pub step_time_history: VecDeque<(f64, f64)>,
+    pub steps_per_sec_history: VecDeque<(f64, f64)>,
     last_update_time: f32,
     update_interval: f32,
     pub save_requested: bool,
     pub load_requested: bool,
+    pub reset_requested: bool,
     pub status_message: Option<String>,
     pub simulation_speed: f32,
     pub rendering_enabled: bool,
     plot_time_counter: f64,
+    pub last_step_time_ms: f32,
+    pub actual_steps_per_sec: f32,
 }
 
 impl UIState {
@@ -35,14 +41,19 @@ impl UIState {
             organism_count_history: VecDeque::new(),
             food_count_history: VecDeque::new(),
             projectile_count_history: VecDeque::new(),
+            step_time_history: VecDeque::new(),
+            steps_per_sec_history: VecDeque::new(),
             last_update_time: 0.0,
             update_interval: 0.5, // Update every 0.5 seconds
             save_requested: false,
             load_requested: false,
+            reset_requested: false,
             status_message: None,
             simulation_speed: 1.0, // Default 1x speed
             rendering_enabled: true,
             plot_time_counter: 0.0,
+            last_step_time_ms: 0.0,
+            actual_steps_per_sec: 0.0,
         }
     }
 
@@ -98,6 +109,19 @@ impl UIState {
             if self.projectile_count_history.len() > MAX_HISTORY_POINTS {
                 self.projectile_count_history.pop_front();
             }
+
+            // Track performance metrics
+            self.step_time_history
+                .push_back((ecosystem.time as f64, self.last_step_time_ms as f64));
+            self.steps_per_sec_history
+                .push_back((ecosystem.time as f64, self.actual_steps_per_sec as f64));
+
+            if self.step_time_history.len() > MAX_HISTORY_POINTS {
+                self.step_time_history.pop_front();
+            }
+            if self.steps_per_sec_history.len() > MAX_HISTORY_POINTS {
+                self.steps_per_sec_history.pop_front();
+            }
         }
     }
 }
@@ -151,13 +175,16 @@ fn draw_stats_panel(
             ui.heading("Simulation Stats");
             ui.separator();
 
-            // Save/Load buttons
+            // Save/Load/Reset buttons
             ui.horizontal(|ui| {
                 if ui.button("💾 Save").clicked() {
                     state.save_requested = true;
                 }
                 if ui.button("📂 Load").clicked() {
                     state.load_requested = true;
+                }
+                if ui.button("🔄 Reset").clicked() {
+                    state.reset_requested = true;
                 }
             });
 
@@ -183,7 +210,7 @@ fn draw_stats_panel(
             // Simulation speed slider
             ui.label("Simulation Speed");
             ui.add(
-                egui::Slider::new(&mut state.simulation_speed, 0.1..=100.0)
+                egui::Slider::new(&mut state.simulation_speed, 0.1..=500.0)
                     .text("x")
                     .logarithmic(false),
             );
@@ -201,6 +228,21 @@ fn draw_stats_panel(
                 params.n_organism
             ));
             ui.label(format!("Food: {}/{}", ecosystem.food.len(), params.n_food));
+
+            // Show pool populations
+            if params.num_genetic_pools > 1 {
+                ui.separator();
+                ui.label("Genetic Pool Populations:");
+                for pool_id in 0..params.num_genetic_pools {
+                    let pool_count = ecosystem
+                        .organisms
+                        .iter()
+                        .filter(|org| org.pool_id == pool_id)
+                        .count();
+                    ui.label(format!("  Pool {}: {}", pool_id, pool_count));
+                }
+            }
+
             ui.separator();
 
             // Runtime Parameters
@@ -333,11 +375,42 @@ fn draw_stats_panel(
                 "Projectiles",
             );
 
+            ui.separator();
+
+            // Performance metrics
+            ui.heading("Performance Metrics");
+            ui.label(format!("Step Time: {:.2} ms", state.last_step_time_ms));
+            ui.label(format!("Steps/Sec: {:.1}", state.actual_steps_per_sec));
+
+            ui.separator();
+
+            // Step time plot
+            ui.heading("Step Time Over Time");
+            draw_time_series_plot(
+                ui,
+                "step_time_plot",
+                &state.step_time_history,
+                "Time (s)",
+                "Step Time (ms)",
+            );
+
+            ui.separator();
+
+            // Steps per second plot
+            ui.heading("Steps/Sec Over Time");
+            draw_time_series_plot(
+                ui,
+                "steps_per_sec_plot",
+                &state.steps_per_sec_history,
+                "Time (s)",
+                "Steps/Sec",
+            );
+
             if !ecosystem.organisms.is_empty() {
                 ui.separator();
 
-                // DNA scatter plot
-                ui.heading("DNA Distribution (2D)");
+                // Brain scatter plot
+                ui.heading("Brain Weights (Mean vs Std Dev)");
                 draw_dna_scatter_plot(ui, &ecosystem.organisms);
             }
         });
@@ -371,6 +444,7 @@ fn draw_organism_detail_panel(
                 organism.pos[0], organism.pos[1]
             ));
             ui.label(format!("Rotation: {:.2}", organism.rot));
+            ui.label(format!("Genetic Pool: {}", organism.pool_id));
 
             ui.separator();
 
@@ -388,13 +462,35 @@ fn draw_organism_detail_panel(
 
             // Brain structure info
             ui.heading("Brain Structure");
-            ui.label(format!("Layers: {}", organism.brain.layers.len()));
+            ui.label(format!("Total Layers: {}", organism.brain.layers.len()));
+            ui.label(format!(
+                "Input: {} neurons",
+                organism.last_brain_inputs.len()
+            ));
+
+            // Calculate total parameters
+            let mut total_params = 0;
+            for layer in &organism.brain.layers {
+                // weights + biases
+                total_params += layer.weights.len() + layer.biases.len();
+            }
+            ui.label(format!("Total Parameters: {}", total_params));
+
+            ui.separator();
+
             for (i, layer) in organism.brain.layers.iter().enumerate() {
+                let layer_name = if i == organism.brain.layers.len() - 1 {
+                    "Output"
+                } else {
+                    "Hidden"
+                };
+                let layer_params = layer.weights.len() + layer.biases.len();
                 ui.label(format!(
-                    "Layer {}: {}x{}",
-                    i,
+                    "Layer {}: {} neurons ({}) - {} params",
+                    i + 1,
                     layer.weights.nrows(),
-                    layer.weights.ncols()
+                    layer_name,
+                    layer_params
                 ));
             }
 
@@ -406,80 +502,118 @@ fn draw_organism_detail_panel(
         });
 }
 
+/// Computes simple 2D representation of brain weights for visualization.
+///
+/// Uses mean and standard deviation of all weights as (x, y) coordinates.
+/// This is much faster than PCA and still shows genetic diversity.
+fn compute_brain_scatter_2d(organisms: &[simulation::organism::Organism]) -> Vec<[f64; 2]> {
+    organisms
+        .iter()
+        .map(|org| {
+            let weights = org.brain.to_flat_vector();
+
+            // Compute mean of all weights
+            let mean: f32 = weights.iter().sum::<f32>() / weights.len() as f32;
+
+            // Compute standard deviation
+            let variance: f32 = weights
+                .iter()
+                .map(|&w| {
+                    let diff = w - mean;
+                    diff * diff
+                })
+                .sum::<f32>()
+                / weights.len() as f32;
+            let std_dev = variance.sqrt();
+
+            [mean as f64, std_dev as f64]
+        })
+        .collect()
+}
+
 fn draw_dna_scatter_plot(ui: &mut egui::Ui, organisms: &[simulation::organism::Organism]) {
     use egui_plot::Points;
 
-    // Convert organism DNA to plot points
-    let points: Vec<[f64; 2]> = organisms
-        .iter()
-        .map(|org| [org.dna[0] as f64, org.dna[1] as f64])
-        .collect();
+    // Use mean/std_dev to visualize brain weights in 2D
+    let points = compute_brain_scatter_2d(organisms);
 
     let scatter_points = Points::new(points)
         .radius(3.0)
         .color(egui::Color32::from_rgb(100, 150, 255));
 
-    Plot::new("dna_scatter")
+    Plot::new("brain_scatter")
         .height(200.0)
         .width(200.0)
-        .data_aspect(1.0)
         .show_axes([true, true])
         .show_grid([true, true])
         .allow_boxed_zoom(false)
         .allow_zoom(false)
         .allow_drag(false)
-        .include_x(0.0)
-        .include_x(1.0)
-        .include_y(0.0)
-        .include_y(1.0)
-        .label_formatter(|_name, value| format!("DNA: ({:.2}, {:.2})", value.x, value.y))
+        .label_formatter(|_name, value| format!("Mean: {:.3}, StdDev: {:.3}", value.x, value.y))
         .show(ui, |plot_ui| {
-            plot_ui.set_plot_bounds(egui_plot::PlotBounds::from_min_max(
-                [-0.1, -0.1],
-                [1.1, 1.1],
-            ));
             plot_ui.points(scatter_points);
         });
 }
 
 fn draw_memory_bars(ui: &mut egui::Ui, memory: &ndarray::Array1<f32>) {
-    ui.horizontal(|ui| {
-        for &value in memory.iter() {
-            // Map from tanh range [-1, 1] to [0, 1]
-            let normalized = f32::midpoint(value.clamp(-1.0, 1.0), 1.0);
+    const ITEMS_PER_ROW: usize = 8;
+    const BAR_WIDTH: f32 = 40.0;
+    const BAR_HEIGHT: f32 = 20.0;
+    const BAR_SPACING: f32 = 5.0;
 
-            // Purple to orange gradient: purple (low) -> gray (mid) -> orange (high)
-            let color = if normalized < 0.5 {
-                // Purple to gray (for values -1 to 0)
-                let t = normalized * 2.0;
-                let r = (120.0 + t * 80.0) as u8;
-                let g = (80.0 + t * 70.0) as u8;
-                let b = (200.0 - t * 50.0) as u8;
-                egui::Color32::from_rgb(r, g, b)
-            } else {
-                // Gray to orange (for values 0 to 1)
-                let t = (normalized - 0.5) * 2.0;
-                let r = (200.0 + t * 55.0) as u8;
-                let g = (150.0 - t * 30.0) as u8;
-                let b = (150.0 - t * 150.0) as u8;
-                egui::Color32::from_rgb(r, g, b)
-            };
+    // Split memory into chunks for multiple rows
+    let memory_vec: Vec<f32> = memory.iter().copied().collect();
 
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(ui.cursor().min, egui::vec2(30.0, 20.0)),
-                2.0,
-                color,
-            );
-            ui.add_space(35.0);
-        }
-    });
+    for chunk in memory_vec.chunks(ITEMS_PER_ROW) {
+        // Draw colored bars
+        ui.horizontal(|ui| {
+            for &value in chunk {
+                // Map from tanh range [-1, 1] to [0, 1]
+                let normalized = f32::midpoint(value.clamp(-1.0, 1.0), 1.0);
 
-    ui.horizontal(|ui| {
-        for &value in memory.iter() {
-            ui.colored_label(egui::Color32::WHITE, format!("{:.2}", value));
-            ui.add_space(5.0);
-        }
-    });
+                // Purple to orange gradient: purple (low) -> gray (mid) -> orange (high)
+                let color = if normalized < 0.5 {
+                    // Purple to gray (for values -1 to 0)
+                    let t = normalized * 2.0;
+                    let r = (120.0 + t * 80.0) as u8;
+                    let g = (80.0 + t * 70.0) as u8;
+                    let b = (200.0 - t * 50.0) as u8;
+                    egui::Color32::from_rgb(r, g, b)
+                } else {
+                    // Gray to orange (for values 0 to 1)
+                    let t = (normalized - 0.5) * 2.0;
+                    let r = (200.0 + t * 55.0) as u8;
+                    let g = (150.0 - t * 30.0) as u8;
+                    let b = (150.0 - t * 150.0) as u8;
+                    egui::Color32::from_rgb(r, g, b)
+                };
+
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(ui.cursor().min, egui::vec2(BAR_WIDTH, BAR_HEIGHT)),
+                    2.0,
+                    color,
+                );
+                ui.add_space(BAR_WIDTH + BAR_SPACING);
+            }
+        });
+
+        // Draw values aligned with bars
+        ui.horizontal(|ui| {
+            for &value in chunk {
+                // Use fixed width label to ensure alignment
+                ui.allocate_ui_with_layout(
+                    egui::vec2(BAR_WIDTH, 15.0),
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| {
+                        ui.colored_label(egui::Color32::WHITE, format!("{:.2}", value));
+                    },
+                );
+                ui.add_space(BAR_SPACING);
+            }
+        });
+
+        ui.add_space(5.0); // Space between rows
+    }
 }
 
 fn draw_signal_bars(ui: &mut egui::Ui, signal: &ndarray::Array1<f32>) {
@@ -604,15 +738,21 @@ fn draw_neural_network(
         layer_activations.push(current_activation.clone());
     }
 
-    // Draw the network - larger height to show all neurons
-    let (response, painter) = ui.allocate_painter(egui::vec2(500.0, 600.0), egui::Sense::hover());
+    // Draw the network - wider to accommodate all layers
+    let width = 700.0; // Increased width for more layers
+    let height = 600.0;
+    let (response, painter) = ui.allocate_painter(egui::vec2(width, height), egui::Sense::hover());
 
     let rect = response.rect;
     let layer_count = layer_activations.len();
 
     if layer_count == 0 {
+        ui.label("No layers to display");
         return;
     }
+
+    // Debug: show layer count
+    ui.label(format!("Displaying {} layers", layer_count));
 
     // Calculate spacing
     let layer_spacing = rect.width() / (layer_count as f32 + 1.0);
@@ -761,29 +901,33 @@ fn draw_neural_network(
 }
 
 fn get_input_label(neuron_idx: usize, params: &simulation::ecosystem::Params) -> Option<String> {
-    // Input structure: vision rays (signal+energy for each direction) + scent (signal) + memory + energy
-    // vision: (signal_size + 1) * num_vision_directions
-    // scent: signal_size
+    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal+dna_dist) + memory + energy
+    // vision: 3 * num_vision_directions
+    // scent: signal_size + 1
     // memory: memory_size
     // energy: 1
 
-    let vision_inputs = (params.signal_size + 1) * params.num_vision_directions;
+    let vision_inputs = 3 * params.num_vision_directions;
     let scent_start = vision_inputs;
-    let scent_end = scent_start + params.signal_size;
+    let scent_end = scent_start + params.signal_size + 1;
     let memory_start = scent_end;
     let memory_end = memory_start + params.memory_size;
 
     if neuron_idx < vision_inputs {
-        let direction = neuron_idx / (params.signal_size + 1);
-        let offset = neuron_idx % (params.signal_size + 1);
-        if offset < params.signal_size {
-            Some(format!("V{} S{}", direction, offset))
+        let direction = neuron_idx / 3;
+        let offset = neuron_idx % 3;
+        if offset == 0 {
+            Some(format!("V{} D", direction)) // Distance
+        } else if offset == 1 {
+            Some(format!("V{} P", direction)) // Pool match
         } else {
-            Some(format!("V{} E", direction))
+            Some(format!("V{} T", direction)) // Type (organism vs food)
         }
-    } else if neuron_idx < scent_end {
+    } else if neuron_idx < scent_end - 1 {
         let signal_idx = neuron_idx - scent_start;
         Some(format!("Scent {}", signal_idx))
+    } else if neuron_idx == scent_end - 1 {
+        Some("DNA Dist".to_string())
     } else if neuron_idx < memory_end {
         let mem_idx = neuron_idx - memory_start;
         Some(format!("Mem {}", mem_idx))

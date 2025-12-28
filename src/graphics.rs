@@ -2,6 +2,23 @@ use crate::simulation;
 use macroquad::prelude::*;
 use ndarray::Array1;
 
+/// Get a distinct color for each genetic pool
+fn get_pool_color(pool_id: usize) -> Color {
+    match pool_id % 10 {
+        0 => Color::from_rgba(255, 100, 100, 255), // Red
+        1 => Color::from_rgba(100, 150, 255, 255), // Blue
+        2 => Color::from_rgba(100, 255, 100, 255), // Green
+        3 => Color::from_rgba(255, 255, 100, 255), // Yellow
+        4 => Color::from_rgba(255, 100, 255, 255), // Magenta
+        5 => Color::from_rgba(100, 255, 255, 255), // Cyan
+        6 => Color::from_rgba(255, 150, 100, 255), // Orange
+        7 => Color::from_rgba(200, 100, 255, 255), // Purple
+        8 => Color::from_rgba(255, 200, 150, 255), // Peach
+        9 => Color::from_rgba(150, 255, 200, 255), // Mint
+        _ => Color::from_rgba(200, 200, 200, 255), // Gray (fallback)
+    }
+}
+
 fn get_organism_at_mouse(
     ecosystem: &simulation::ecosystem::Ecosystem,
     params: &simulation::ecosystem::Params,
@@ -175,18 +192,9 @@ pub fn draw_organisms(
             );
         }
 
-        // Draw organism body
-        draw_circle(
-            screen_pos[0],
-            screen_pos[1],
-            screen_radius,
-            Color::from_rgba(
-                (entity.signal[0] * 255.0) as u8,
-                (entity.signal[1] * 255.0) as u8,
-                (entity.signal[2] * 255.0) as u8,
-                255,
-            ),
-        );
+        // Draw organism body with pool color
+        let pool_color = get_pool_color(entity.pool_id);
+        draw_circle(screen_pos[0], screen_pos[1], screen_radius, pool_color);
 
         // organism health bar (scaled)
         let health_bar_width = 20.0;
@@ -266,20 +274,18 @@ pub fn draw_organisms(
         // }
 
         for vision_vector in vision_vectors.iter() {
-            let end_point = &screen_pos + vision_vector.to_screen(params, ui_panel_width);
-            // draw a line from the organism's position to the end point of the vision vector
+            // Decrease accuracy: only show 30% of the actual vision length
+            let shortened_vector = vision_vector;
+            let end_point = &screen_pos + shortened_vector.to_screen(params, ui_panel_width);
+
+            // Draw a line from the organism's position to the shortened end point
             draw_line(
                 screen_pos[0],
                 screen_pos[1],
                 end_point[0],
                 end_point[1],
                 1.0,
-                BLACK, // Color::from_rgba(
-                       //     (brain_inputs[(params.signal_size + 1) * i + 0]* 255.0) as u8,
-                       //     (brain_inputs[(params.signal_size + 1) * i + 1] * 255.0) as u8,
-                       //     (brain_inputs[(params.signal_size + 1) * i + 2] * 255.0) as u8,
-                       //     255
-                       // )
+                Color::from_rgba(0, 0, 0, 70), // Semi-transparent black for less visual clutter
             );
         }
     });

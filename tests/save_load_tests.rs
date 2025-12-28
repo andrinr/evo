@@ -10,7 +10,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + (signal_size + 1) + memory_size + 1,
+        3 * num_vision_directions + (signal_size + 1) + memory_size + 1,
         10,
         signal_size + memory_size + 4,
     ];
@@ -51,6 +51,7 @@ fn create_test_params() -> Params {
         organism_spawn_rate: 1.0,
         food_spawn_rate: 1.0,
         food_lifetime: 0.0,
+        num_genetic_pools: 1,
     }
 }
 

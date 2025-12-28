@@ -41,10 +41,10 @@ case_sensitive_file_extension_comparisons = "allow"
 semicolon_if_nothing_returned = "allow"
 
 [dependencies]
-macroquad = "0.4.14"
+macroquad = { version = "0.4.14", default-features = false }
 egui-macroquad = "0.17.3"
 egui_plot = "0.31"
-ndarray = { version = "0.16.0", features = ["serde"] }
+ndarray = { version = "0.16.0", features = ["serde", "rayon"] }
 ndarray-rand = "0.15.0"
 kdtree = "0.7.0"
 geo = "0.30.0"
@@ -53,3 +53,12 @@ rayon = "1.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 2  # Some optimization in dev mode for better performance

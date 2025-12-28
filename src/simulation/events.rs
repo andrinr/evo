@@ -142,7 +142,6 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                     && let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
                 {
                     attacker.score += 1;
-                    println!("Projectile kill!")
                 }
                 // Mark projectile for removal
                 projectiles_to_remove.push(projectile_idx);
@@ -152,7 +151,6 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 receiver_id,
                 amount,
             } => {
-                println!("Shared energy");
                 energy_transfers.push((giver_id, receiver_id, amount));
             }
         }
