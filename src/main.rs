@@ -42,7 +42,7 @@ fn create_simulation_params() -> simulation::ecosystem::Params {
         idle_energy_rate: 0.1,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
-        rot_energy_rate: 0.0000003,
+        rot_energy_rate: 0.000_000_3,
         num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
         signal_size,
@@ -290,11 +290,13 @@ async fn main() {
             *speed_lock = ui_state.simulation_speed;
         }
 
-        let mut eco_lock = ecosystem.lock().unwrap();
-
         // Genesis screen
-        if eco_lock.is_none() {
-            drop(eco_lock);
+        let is_genesis = {
+            let eco_lock = ecosystem.lock().unwrap();
+            eco_lock.is_none()
+        };
+
+        if is_genesis {
             draw_genesis_screen();
             if is_key_down(KeyCode::Enter) {
                 let mut eco_lock = ecosystem.lock().unwrap();
@@ -306,14 +308,14 @@ async fn main() {
         }
 
         // Render at display refresh rate (using current state snapshot)
-        let eco = eco_lock.as_mut().unwrap();
-        let mut params_lock = params.lock().unwrap();
-        clear_background(WHITE);
-        update_and_render(eco, &mut params_lock, &mut ui_state);
-        ui::process_egui();
-
-        drop(params_lock);
-        drop(eco_lock);
+        {
+            let mut eco_lock = ecosystem.lock().unwrap();
+            let eco = eco_lock.as_mut().unwrap();
+            let mut params_lock = params.lock().unwrap();
+            clear_background(WHITE);
+            update_and_render(eco, &mut params_lock, &mut ui_state);
+            ui::process_egui();
+        } // Locks drop here
         next_frame().await
     }
 }

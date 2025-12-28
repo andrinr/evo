@@ -64,6 +64,7 @@ impl Organism {
     /// * `fov` - Field of view in radians
     /// * `max_vision` - Max length of vision vector
     /// * `layer_sizes` - Neural network layer dimensions
+    #[allow(clippy::too_many_arguments)]
     pub fn new_random(
         id: usize,
         screen_center: &Array1<f32>,

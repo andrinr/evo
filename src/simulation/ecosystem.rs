@@ -362,7 +362,7 @@ impl Ecosystem {
             brain_inputs[offset + params.memory_size] = entity.energy; // energy
 
             // Store brain inputs for visualization
-            entity.last_brain_inputs = brain_inputs.clone();
+            entity.last_brain_inputs.clone_from(&brain_inputs);
 
             let brain_outputs = entity.brain.think(&brain_inputs);
 
@@ -633,7 +633,7 @@ impl Ecosystem {
                     let mut cloned_brain = parent.brain.clone();
                     cloned_brain.mutate(mutation_scale);
                     new_organism.brain = cloned_brain;
-                    new_organism.dna = parent.dna.clone();
+                    new_organism.dna.clone_from(&parent.dna);
 
                     // Add Gaussian mutation to DNA
                     for i in 0..2 {
@@ -653,7 +653,7 @@ impl Ecosystem {
                 new_organism.brain = cloned_brain;
 
                 // Inherit DNA with mutation
-                new_organism.dna = parent.dna.clone();
+                new_organism.dna.clone_from(&parent.dna);
                 for i in 0..2 {
                     let mutation = rand::rng().random_range(-1.0..1.0) * params.dna_mutation_rate;
                     new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);

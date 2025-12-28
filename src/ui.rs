@@ -346,7 +346,7 @@ fn draw_stats_panel(
 fn draw_organism_detail_panel(
     egui_ctx: &egui::Context,
     organism: &simulation::organism::Organism,
-    _params: &simulation::ecosystem::Params,
+    params: &simulation::ecosystem::Params,
     is_selected: bool,
 ) {
     let title = if is_selected {
@@ -402,7 +402,7 @@ fn draw_organism_detail_panel(
 
             // Neural network visualization
             ui.heading("Neural Network");
-            draw_neural_network(ui, organism, _params);
+            draw_neural_network(ui, organism, params);
         });
 }
 

@@ -210,8 +210,8 @@ pub fn draw_organisms(
         );
 
         // text scaling
-        let _font_size = 9.0; // minimum font size of 8
-        let _text_spacing = 10.0;
+        // let _font_size = 9.0; // minimum font size of 8
+        // let _text_spacing = 10.0;
 
         // // organism id
         // let id_text = format!("ID:{}", entity.id);
