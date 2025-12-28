@@ -7,6 +7,7 @@
 //! - Organism spawning, reproduction, and evolution
 
 use super::brain;
+use super::dna;
 use super::events;
 use super::food;
 use super::organism;
@@ -31,6 +32,14 @@ pub struct Params {
     pub vision_radius: f32,
     /// Maximum distance organisms can smell food.
     pub scent_radius: f32,
+    /// Maximum distance for energy sharing between organisms.
+    pub share_radius: f32,
+    /// Maximum DNA distance for breeding (hard cutoff).
+    /// Only organisms with DNA distance less than this value can interbreed.
+    /// Typical range: 0.1-0.3 (max periodic distance is ~0.707).
+    pub dna_breeding_distance: f32,
+    /// DNA mutation rate (standard deviation of Gaussian noise).
+    pub dna_mutation_rate: f32,
     /// Energy consumed per second while idle.
     pub idle_energy_rate: f32,
     /// Energy cost per unit of movement.
@@ -69,6 +78,10 @@ pub struct Params {
     pub attack_cooldown: f32,
     /// Fraction of organism energy converted to corpse food.
     pub corpse_energy_ratio: f32,
+    /// Maximum energy an organism can have.
+    pub max_energy: f32,
+    /// Energy value of spawned food items.
+    pub food_energy: f32,
     /// Projectile travel speed.
     pub projectile_speed: f32,
     /// Maximum projectile travel distance.
@@ -125,7 +138,7 @@ impl Ecosystem {
         }
 
         for _i in 0..params.n_food {
-            let food_item = food::Food::new_random(&center);
+            let food_item = food::Food::new_random(&center, params.food_energy);
             food.push(food_item);
         }
 
@@ -140,7 +153,8 @@ impl Ecosystem {
 
     /// Advances the simulation by one timestep with parallel organism updates.
     pub fn step(&mut self, params: &Params, dt: f32) {
-        let (kd_tree_orgs, kd_tree_food) = build_trees(self).expect("Failed to build kd-trees");
+        let (kd_tree_orgs, kd_tree_food, kd_tree_projectiles) =
+            build_trees(self).expect("Failed to build kd-trees");
 
         // Clone the organisms vector
         let new_organisms = self.organisms.clone();
@@ -172,6 +186,12 @@ impl Ecosystem {
                 &squared_euclidean,
             );
 
+            let neighbor_projectiles = kd_tree_projectiles.within(
+                &entity.pos.to_vec(),
+                params.vision_radius.powi(2),
+                &squared_euclidean,
+            );
+
             // the above returns a Result, so we need to handle the error
             let neighbors_orgs = match neighbors_orgs {
                 Ok(neighbors) => neighbors,
@@ -187,11 +207,18 @@ impl Ecosystem {
                 }
             };
 
+            let neighbor_projectiles = match neighbor_projectiles {
+                Ok(neighbors) => neighbors,
+                Err(e) => {
+                    panic!("Error finding projectile neighbors: {:?}", e);
+                }
+            };
+
             // collect all the signals from neighbor organisms and food
-            // Input structure: [vision rays] + [scent] + [memory] + [energy]
+            // Input structure: [vision rays] + [scent] + [DNA distance] + [memory] + [energy]
             let mut brain_inputs = Array1::zeros(
                 (params.signal_size + 1) * params.num_vision_directions
-                    + params.signal_size // scent inputs (RGB)
+                    + params.signal_size + 1 // scent inputs (RGB + DNA distance)
                     + params.memory_size
                     + 1, // energy
             );
@@ -230,9 +257,29 @@ impl Ecosystem {
                     if distance < params.body_radius && distance < min_distance {
                         min_distance = distance;
                         brain_inputs[(params.signal_size + 1) * i] = 0.0;
-                        brain_inputs[(params.signal_size + 1) * i + 1] = 0.2; // food signal color (green)
+                        brain_inputs[(params.signal_size + 1) * i + 1] = 0.0; // food signal color (green)
                         brain_inputs[(params.signal_size + 1) * i + 2] = 1.0; // food y position
                         brain_inputs[(params.signal_size + 1) * i + 3] = distance; // distance to food
+                    }
+                }
+
+                // detect neighbor projectiles within the vision vector
+                for (_, projectile_id) in &neighbor_projectiles {
+                    let projectile_item = &self.projectiles[**projectile_id];
+
+                    // Skip projectiles owned by this organism
+                    if projectile_item.owner_id == entity.id {
+                        continue;
+                    }
+
+                    let distance =
+                        line_circle_distance(&entity.pos, &end_point, &projectile_item.pos);
+                    if distance < params.projectile_radius && distance < min_distance {
+                        min_distance = distance;
+                        brain_inputs[(params.signal_size + 1) * i] = 1.0; // projectile signal color (red)
+                        brain_inputs[(params.signal_size + 1) * i + 1] = 0.0;
+                        brain_inputs[(params.signal_size + 1) * i + 2] = 0.0;
+                        brain_inputs[(params.signal_size + 1) * i + 3] = distance; // distance to projectile
                     }
                 }
             }
@@ -258,23 +305,37 @@ impl Ecosystem {
                     panic!("Error finding scent neighbors (food): {e:?}");
                 });
 
+            // Scent: signal (RGB) + DNA distance to nearest organism
             let mut scent_signal = Array1::zeros(params.signal_size);
             let mut scent_count = 0;
+            let mut closest_dna_distance = 0.0f32;
+            let mut min_org_distance = f32::MAX;
 
-            // Add organism signals
+            // Add organism signals and find closest organism for DNA distance
             for (_, org_id) in &scent_orgs {
                 let neighbor_org = &new_organisms[**org_id];
                 if neighbor_org.id == entity.id {
                     continue; // Skip self
                 }
-                // Add all signal components (works for any signal_size)
+                // Add all signal components (RGB)
                 for i in 0..params.signal_size {
                     scent_signal[i] += neighbor_org.signal[i];
                 }
                 scent_count += 1;
+
+                // Track closest organism for DNA distance
+                let dist = (&entity.pos - &neighbor_org.pos)
+                    .mapv(|x| x * x)
+                    .sum()
+                    .sqrt();
+                if dist < min_org_distance {
+                    min_org_distance = dist;
+                    // Calculate DNA distance with periodic boundary conditions
+                    closest_dna_distance = dna::periodic_distance(&entity.dna, &neighbor_org.dna);
+                }
             }
 
-            // Add food signals
+            // Add food signals (no DNA for food)
             for (_, _food_id) in &scent_foods {
                 scent_count += 1;
                 scent_signal[2] += 1.0; // B-channel
@@ -285,12 +346,15 @@ impl Ecosystem {
             }
 
             let mut offset = (params.signal_size + 1) * params.num_vision_directions;
-            // Add scent to inputs
+            // Add scent to inputs (signal)
             brain_inputs
                 .slice_mut(s![offset..offset + params.signal_size])
                 .assign(&scent_signal);
-
             offset += params.signal_size;
+            // Add DNA distance to closest organism
+            brain_inputs[offset] = closest_dna_distance;
+            offset += 1;
+
             // Add the organism's own memory to the inputs
             brain_inputs
                 .slice_mut(s![offset..offset + params.memory_size])
@@ -303,6 +367,7 @@ impl Ecosystem {
             let brain_outputs = entity.brain.think(&brain_inputs);
 
             entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
+            entity.signal[1] = 1.0;
             entity.memory = brain_outputs
                 .slice(s![
                     params.signal_size..params.signal_size + params.memory_size
@@ -319,13 +384,14 @@ impl Ecosystem {
 
             let vel = brain_outputs[offset + 1]; // acceleration
             let attack_strength = brain_outputs[offset + 2]; // attack action
+            let share_amount = brain_outputs[offset + 3]; // energy sharing
 
             let vel_vector = Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()])
                 * params.move_multiplier; // scale acceleration
 
             entity.pos += &(&vel_vector * dt); // update velocity
             entity.consume_energy(vel.abs() * dt * params.move_energy_rate); // energy consumption for acceleration
-            // entity.consume_energy(rot.abs() * dt * params.rot_energy_rate); // energy consumption for rotation
+            entity.consume_energy(rot.abs() * dt * params.rot_energy_rate); // energy consumption for rotation
             entity.consume_energy(params.idle_energy_rate * dt); // additional energy consumption
 
             // Handle attack/projectile shooting (with cooldown check)
@@ -344,12 +410,38 @@ impl Ecosystem {
                 });
             }
 
+            // Handle energy sharing with nearest organism
+            if share_amount > 0.1 && entity.energy > 0.2 {
+                // Find nearest organism within share_radius
+                let mut nearest_dist = f32::MAX;
+                let mut nearest_id = None;
+
+                for (_, neighbor_id) in &neighbors_orgs {
+                    let other = &new_organisms[**neighbor_id];
+                    if other.id != entity.id {
+                        let dist = (&entity.pos - &other.pos).mapv(f32::abs).sum();
+                        if dist < params.share_radius && dist < nearest_dist {
+                            nearest_dist = dist;
+                            nearest_id = Some(other.id);
+                        }
+                    }
+                }
+
+                if let Some(receiver_id) = nearest_id {
+                    local_events.push(events::SimulationEvent::EnergyShared {
+                        giver_id: entity.id,
+                        receiver_id,
+                        amount: share_amount,
+                    });
+                }
+            }
+
             // consume all food within BODY_RADIUS
             for (_, food_id) in &neighbor_foods {
                 let food_item = &self.food[**food_id];
                 let org_food_dist = (&entity.pos - &food_item.pos).mapv(f32::abs).sum();
                 if org_food_dist < params.body_radius * 2.0 && !food_item.is_consumed() {
-                    entity.gain_energy(food_item.energy, 1.0);
+                    entity.gain_energy(food_item.energy, params.max_energy);
                     entity.score += 1; // increase score for reproduction
 
                     local_events.push(events::SimulationEvent::FoodConsumed {
@@ -501,26 +593,71 @@ impl Ecosystem {
             let reproduction_strategy = rand::rng().random_range(0..2);
 
             if reproduction_strategy == 0 && self.organisms.len() >= 10 {
-                // pick two random organisms to reproduce
-                let id_a = rand::rng().random_range(0..self.organisms.len() / 5); // pick from the top 10% of organisms
-                let id_b = rand::rng().random_range(0..self.organisms.len() / 10); // pick from the top 10% of organisms
+                // Crossover: pick two organisms with probability based on DNA similarity
+                let mut attempts = 0;
+                let max_attempts = 50;
+                let mut found_mate = false;
 
-                let parent_1 = &self.organisms[id_a];
-                let parent_2 = &self.organisms[id_b];
+                while attempts < max_attempts && !found_mate {
+                    let id_a = rand::rng().random_range(0..self.organisms.len() / 5);
+                    let id_b = rand::rng().random_range(0..self.organisms.len() / 10);
 
-                let crossover_brain = brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
-                // crossover_brain.mutate(mutation_scale);
+                    let parent_1 = &self.organisms[id_a];
+                    let parent_2 = &self.organisms[id_b];
 
-                new_organism.brain = crossover_brain;
+                    // Calculate DNA distance and check if within breeding distance
+                    let dna_distance = dna::periodic_distance(&parent_1.dna, &parent_2.dna);
+
+                    // Accept this pairing if DNA is similar enough (hard cutoff)
+                    if dna_distance < params.dna_breeding_distance {
+                        let crossover_brain =
+                            brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
+                        new_organism.brain = crossover_brain;
+
+                        // Inherit DNA from parents with crossover and mutation
+                        let alpha = rand::rng().random::<f32>();
+                        new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
+                        dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
+
+                        found_mate = true;
+                    }
+                    attempts += 1;
+                }
+
+                println!("attemps {}", attempts);
+
+                // If no mate found after attempts, fall back to asexual reproduction
+                if !found_mate && self.organisms.len() >= 10 {
+                    let id = rand::rng().random_range(0..self.organisms.len() / 10);
+                    let parent = &self.organisms[id];
+                    let mut cloned_brain = parent.brain.clone();
+                    cloned_brain.mutate(mutation_scale);
+                    new_organism.brain = cloned_brain;
+                    new_organism.dna = parent.dna.clone();
+
+                    // Add Gaussian mutation to DNA
+                    for i in 0..2 {
+                        let mutation = rand::rng().random_range(-1.0..1.0)
+                            * mutation_scale
+                            * params.dna_mutation_rate;
+                        new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);
+                    }
+                }
             } else if reproduction_strategy == 1 && self.organisms.len() >= 10 {
-                let id = rand::rng().random_range(0..self.organisms.len() / 15); // pick from the top 10% of organisms
-
+                // Asexual: clone with mutation
+                let id = rand::rng().random_range(0..self.organisms.len() / 10);
                 let parent = &self.organisms[id];
 
                 let mut cloned_brain = parent.brain.clone();
                 cloned_brain.mutate(mutation_scale);
-
                 new_organism.brain = cloned_brain;
+
+                // Inherit DNA with mutation
+                new_organism.dna = parent.dna.clone();
+                for i in 0..2 {
+                    let mutation = rand::rng().random_range(-1.0..1.0) * params.dna_mutation_rate;
+                    new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);
+                }
             }
             self.organisms.push(new_organism);
         }
@@ -544,7 +681,7 @@ impl Ecosystem {
             let total_food_to_spawn = (base_spawn + extra).min(max_allowed_food);
 
             for _ in 0..total_food_to_spawn {
-                let food_item = food::Food::new_random(&center);
+                let food_item = food::Food::new_random(&center, params.food_energy);
                 self.food.push(food_item);
             }
         }
@@ -575,10 +712,11 @@ fn build_tree<T>(items: &[T], get_pos: impl Fn(&T) -> Vec<f32>) -> Result<Tree2D
     Ok(tree)
 }
 
-fn build_trees(ecosystem: &Ecosystem) -> Result<(Tree2D, Tree2D), KdTreeError> {
+fn build_trees(ecosystem: &Ecosystem) -> Result<(Tree2D, Tree2D, Tree2D), KdTreeError> {
     let kd_tree_orgs = build_tree(&ecosystem.organisms, |org| org.pos.to_vec())?;
     let kd_tree_food = build_tree(&ecosystem.food, |food| food.pos.to_vec())?;
-    Ok((kd_tree_orgs, kd_tree_food))
+    let kd_tree_projectiles = build_tree(&ecosystem.projectiles, |proj| proj.pos.to_vec())?;
+    Ok((kd_tree_orgs, kd_tree_food, kd_tree_projectiles))
 }
 
 fn line_circle_distance(

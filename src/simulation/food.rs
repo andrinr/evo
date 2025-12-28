@@ -27,14 +27,15 @@ impl Food {
     /// # Arguments
     ///
     /// * `screen_center` - The center point of the simulation area, used to calculate bounds.
+    /// * `energy` - The energy value for this food item.
     ///
     /// # Returns
     ///
-    /// A new `Food` instance with random position and energy = 1.0.
-    pub fn new_random(screen_center: &Array1<f32>) -> Self {
+    /// A new `Food` instance with random position and specified energy.
+    pub fn new_random(screen_center: &Array1<f32>, energy: f32) -> Self {
         Self {
             pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
-            energy: 1.0,
+            energy,
             age: 0.0,
         }
     }

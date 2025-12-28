@@ -1,6 +1,6 @@
 use crate::simulation;
 use egui_macroquad::egui;
-use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
+use egui_plot::{Line, Plot, PlotPoints};
 use std::collections::VecDeque;
 
 const MAX_HISTORY_POINTS: usize = 500;
@@ -21,6 +21,7 @@ pub struct UIState {
     pub status_message: Option<String>,
     pub simulation_speed: f32,
     pub rendering_enabled: bool,
+    plot_time_counter: f64,
 }
 
 impl UIState {
@@ -41,11 +42,16 @@ impl UIState {
             status_message: None,
             simulation_speed: 1.0, // Default 1x speed
             rendering_enabled: true,
+            plot_time_counter: 0.0,
         }
     }
 
     pub fn set_last_update_time(&mut self, time: f32) {
         self.last_update_time = time;
+    }
+
+    pub fn reset_plot_time(&mut self) {
+        self.plot_time_counter = 0.0;
     }
 
     pub fn update_history(&mut self, ecosystem: &simulation::ecosystem::Ecosystem) {
@@ -330,9 +336,9 @@ fn draw_stats_panel(
             if !ecosystem.organisms.is_empty() {
                 ui.separator();
 
-                // Age distribution plot
-                ui.heading("Age Distribution");
-                draw_age_histogram(ui, &ecosystem.organisms);
+                // DNA scatter plot
+                ui.heading("DNA Distribution (2D)");
+                draw_dna_scatter_plot(ui, &ecosystem.organisms);
             }
         });
 }
@@ -400,46 +406,63 @@ fn draw_organism_detail_panel(
         });
 }
 
-fn draw_age_histogram(ui: &mut egui::Ui, organisms: &[simulation::organism::Organism]) {
-    // Create age bins
-    let max_age = organisms.iter().map(|o| o.age).fold(0.0f32, f32::max);
-    let num_bins = 10;
-    let bin_size = (max_age / num_bins as f32).max(1.0);
+fn draw_dna_scatter_plot(ui: &mut egui::Ui, organisms: &[simulation::organism::Organism]) {
+    use egui_plot::Points;
 
-    let mut bins = vec![0; num_bins];
-    for org in organisms {
-        let bin_index = ((org.age / bin_size) as usize).min(num_bins - 1);
-        bins[bin_index] += 1;
-    }
-
-    let bars: Vec<Bar> = bins
+    // Convert organism DNA to plot points
+    let points: Vec<[f64; 2]> = organisms
         .iter()
-        .enumerate()
-        .map(|(i, &count)| {
-            Bar::new(i as f64 * bin_size as f64, count as f64).width(bin_size as f64 * 0.8)
-        })
+        .map(|org| [org.dna[0] as f64, org.dna[1] as f64])
         .collect();
 
-    let chart = BarChart::new(bars);
+    let scatter_points = Points::new(points)
+        .radius(3.0)
+        .color(egui::Color32::from_rgb(100, 150, 255));
 
-    Plot::new("age_histogram")
-        .height(150.0)
+    Plot::new("dna_scatter")
+        .height(200.0)
+        .width(200.0)
+        .data_aspect(1.0)
         .show_axes([true, true])
+        .show_grid([true, true])
+        .allow_boxed_zoom(false)
+        .allow_zoom(false)
+        .allow_drag(false)
+        .include_x(0.0)
+        .include_x(1.0)
+        .include_y(0.0)
+        .include_y(1.0)
+        .label_formatter(|_name, value| format!("DNA: ({:.2}, {:.2})", value.x, value.y))
         .show(ui, |plot_ui| {
-            plot_ui.bar_chart(chart);
+            plot_ui.set_plot_bounds(egui_plot::PlotBounds::from_min_max(
+                [-0.1, -0.1],
+                [1.1, 1.1],
+            ));
+            plot_ui.points(scatter_points);
         });
 }
 
 fn draw_memory_bars(ui: &mut egui::Ui, memory: &ndarray::Array1<f32>) {
     ui.horizontal(|ui| {
         for &value in memory.iter() {
-            let normalized = value.clamp(0.0, 1.0);
-            let color_value = (normalized * 255.0) as u8;
-            // Brighter purple/magenta color scheme
-            let color = if normalized > 0.5 {
-                egui::Color32::from_rgb(255, color_value / 2, 255)
+            // Map from tanh range [-1, 1] to [0, 1]
+            let normalized = f32::midpoint(value.clamp(-1.0, 1.0), 1.0);
+
+            // Purple to orange gradient: purple (low) -> gray (mid) -> orange (high)
+            let color = if normalized < 0.5 {
+                // Purple to gray (for values -1 to 0)
+                let t = normalized * 2.0;
+                let r = (120.0 + t * 80.0) as u8;
+                let g = (80.0 + t * 70.0) as u8;
+                let b = (200.0 - t * 50.0) as u8;
+                egui::Color32::from_rgb(r, g, b)
             } else {
-                egui::Color32::from_rgb(color_value, 150, 255)
+                // Gray to orange (for values 0 to 1)
+                let t = (normalized - 0.5) * 2.0;
+                let r = (200.0 + t * 55.0) as u8;
+                let g = (150.0 - t * 30.0) as u8;
+                let b = (150.0 - t * 150.0) as u8;
+                egui::Color32::from_rgb(r, g, b)
             };
 
             ui.painter().rect_filled(
@@ -461,18 +484,26 @@ fn draw_memory_bars(ui: &mut egui::Ui, memory: &ndarray::Array1<f32>) {
 
 fn draw_signal_bars(ui: &mut egui::Ui, signal: &ndarray::Array1<f32>) {
     ui.horizontal(|ui| {
-        for &value in signal {
-            let normalized = value.clamp(0.0, 1.0);
+        for (i, &value) in signal.iter().enumerate() {
+            // Map from tanh range [-1, 1] to [0, 1]
+            let normalized = f32::midpoint(value.clamp(-1.0, 1.0), 1.0);
             let rect_height = 20.0;
             let rect_width = 30.0;
-            // Brighter color with more saturation
-            let color_value = (normalized * 255.0) as u8;
-            let color = if normalized > 0.5 {
-                // Bright colors for high values
-                egui::Color32::from_rgb(255, color_value, 100)
+
+            // Use actual RGB color mapping for the 3 signal channels
+            // This represents the organism's visual "color"
+            let color = if i == 0 {
+                // Red channel: low = dark, high = bright red
+                let intensity = (normalized * 255.0) as u8;
+                egui::Color32::from_rgb(intensity, 50, 50)
+            } else if i == 1 {
+                // Green channel: low = dark, high = bright green
+                let intensity = (normalized * 255.0) as u8;
+                egui::Color32::from_rgb(50, intensity, 50)
             } else {
-                // Cyan for low values
-                egui::Color32::from_rgb(100, 180, color_value)
+                // Blue channel: low = dark, high = bright blue
+                let intensity = (normalized * 255.0) as u8;
+                egui::Color32::from_rgb(50, 50, intensity)
             };
 
             ui.painter().rect_filled(
@@ -764,18 +795,20 @@ fn get_input_label(neuron_idx: usize, params: &simulation::ecosystem::Params) ->
 }
 
 fn get_output_label(neuron_idx: usize, params: &simulation::ecosystem::Params) -> Option<String> {
-    // Output structure: signal + memory + rotation + acceleration + attack
+    // Output structure: signal + memory + rotation + acceleration + attack + share
     // signal: signal_size
     // memory: memory_size
     // rotation: 1
     // acceleration: 1
     // attack: 1
+    // share: 1
 
     let signal_end = params.signal_size;
     let memory_end = signal_end + params.memory_size;
     let rotation_idx = memory_end;
     let accel_idx = rotation_idx + 1;
     let attack_idx = accel_idx + 1;
+    let share_idx = attack_idx + 1;
 
     if neuron_idx < signal_end {
         Some(format!("Signal {}", neuron_idx))
@@ -788,6 +821,8 @@ fn get_output_label(neuron_idx: usize, params: &simulation::ecosystem::Params) -
         Some("Accel".to_string())
     } else if neuron_idx == attack_idx {
         Some("Attack".to_string())
+    } else if neuron_idx == share_idx {
+        Some("Share".to_string())
     } else {
         None
     }

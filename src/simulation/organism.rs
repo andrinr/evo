@@ -47,6 +47,8 @@ pub struct Organism {
     pub vision_angles: Array1<f32>,
     /// Vision ray lengths as fraction of max vision radius
     pub vision_lengths: Array1<f32>,
+    /// DNA vector for breeding compatibility (2D space)
+    pub dna: Array1<f32>,
 }
 
 impl Organism {
@@ -102,6 +104,7 @@ impl Organism {
             last_brain_inputs: Array1::zeros(input_size),
             vision_angles,
             vision_lengths,
+            dna: Array1::random(2, Uniform::new(0.0, 1.0)),
         }
     }
 

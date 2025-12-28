@@ -4,38 +4,45 @@
 //! Organisms evolve behaviors through genetic algorithms while competing for food
 //! and attacking each other with projectiles.
 
+use evo::simulation;
 use macroquad::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod graphics;
-mod simulation;
 mod ui;
 
 fn create_simulation_params() -> simulation::ecosystem::Params {
-    let signal_size: usize = 3;
-    let num_vision_directions: usize = 3;
-    let memory_size: usize = 8;
+    let signal_size: usize = 4;
+    let num_vision_directions: usize = 7;
+    let memory_size: usize = 10;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + signal_size + memory_size + 1, // input size: vision + scent + memory + energy
-        24,
+        (signal_size + 1) * num_vision_directions + (signal_size + 1) + memory_size + 1, // input size: vision + scent(signal+dna_dist) + memory + energy
+        64,
+        32,
         16,                            // hidden layer size
-        signal_size + memory_size + 3, // output size (signal + memory + rotation + acceleration + attack)
+        signal_size + memory_size + 4, // output size (signal + memory + rotation + acceleration + attack + share)
     ];
 
     let vision_radius = 50.0;
-    let scent_radius = 60.0; // Larger than vision to smell food from farther away
+    let scent_radius = 20.0;
+    let share_radius = 15.0;
+    let dna_breeding_distance = 0.2; // Max DNA distance for breeding (hard cutoff)
+    let dna_mutation_rate = 0.1; // Standard deviation of DNA mutation
 
     simulation::ecosystem::Params {
         body_radius: 3.0,
         vision_radius,
         scent_radius,
+        share_radius,
+        dna_breeding_distance,
+        dna_mutation_rate,
         idle_energy_rate: 0.1,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
-        rot_energy_rate: 0.00003,
+        rot_energy_rate: 0.0000003,
         num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
         signal_size,
@@ -48,12 +55,14 @@ fn create_simulation_params() -> simulation::ecosystem::Params {
         box_height: 800.0,
         layer_sizes,
         attack_cost_rate: 0.1,
-        attack_damage_rate: 0.6,
+        attack_damage_rate: 10.0,
         attack_cooldown: 0.1,
-        corpse_energy_ratio: 0.8,
+        corpse_energy_ratio: 2.0,
+        max_energy: 2.0,
+        food_energy: 1.0,
         projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
-        projectile_radius: 1.0,
+        projectile_radius: 2.0,
         organism_spawn_rate: 3.0,
         food_spawn_rate: 4.0,
         food_lifetime: 20.0, // 0 = unlimited
@@ -137,9 +146,9 @@ fn handle_load_request(eco: &mut simulation::ecosystem::Ecosystem, ui_state: &mu
             // Clear history as it's from a different timeline
             ui_state.organism_count_history.clear();
             ui_state.food_count_history.clear();
-            ui_state.avg_age_history.clear();
             ui_state.avg_score_history.clear();
             ui_state.set_last_update_time(eco.time);
+            ui_state.reset_plot_time();
         }
         Err(e) => {
             ui_state.status_message = Some(format!("✗ Load failed: {}", e));

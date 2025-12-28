@@ -27,6 +27,8 @@
 pub mod simulation {
     /// Neural network implementation for organism brains.
     pub mod brain;
+    /// DNA utilities for genetic similarity and breeding.
+    pub mod dna;
     /// Main ecosystem simulation with parallel updates.
     pub mod ecosystem;
     /// Event system for thread-safe state updates.

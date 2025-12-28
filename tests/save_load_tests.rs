@@ -10,9 +10,9 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        (signal_size + 1) * num_vision_directions + signal_size + memory_size + 1,
+        (signal_size + 1) * num_vision_directions + (signal_size + 1) + memory_size + 1,
         10,
-        signal_size + memory_size + 3,
+        signal_size + memory_size + 4,
     ];
 
     let vision_radius = 30.0;
@@ -21,6 +21,9 @@ fn create_test_params() -> Params {
         body_radius: 3.0,
         vision_radius,
         scent_radius: 50.0,
+        share_radius: 15.0,
+        dna_breeding_distance: 0.2,
+        dna_mutation_rate: 0.05,
         idle_energy_rate: 0.023,
         move_energy_rate: 0.0002,
         move_multiplier: 60.0,
@@ -40,6 +43,8 @@ fn create_test_params() -> Params {
         attack_damage_rate: 0.4,
         attack_cooldown: 1.0,
         corpse_energy_ratio: 0.8,
+        max_energy: 2.0,
+        food_energy: 1.0,
         projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
         projectile_radius: 1.0,

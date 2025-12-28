@@ -49,6 +49,15 @@ pub enum SimulationEvent {
         /// ID of the organism that fired the projectile.
         owner_id: usize,
     },
+    /// An organism shared energy with another organism.
+    EnergyShared {
+        /// ID of the organism giving energy.
+        giver_id: usize,
+        /// ID of the organism receiving energy.
+        receiver_id: usize,
+        /// Amount of energy to transfer.
+        amount: f32,
+    },
 }
 
 /// Queue for collecting simulation events from parallel updates.
@@ -85,6 +94,7 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
     let mut food_claims: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut dead_organisms: Vec<(usize, Array1<f32>)> = Vec::new();
     let mut projectiles_to_remove: Vec<usize> = Vec::new();
+    let mut energy_transfers: Vec<(usize, usize, f32)> = Vec::new();
 
     for event in queue.drain() {
         match event {
@@ -132,9 +142,18 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                     && let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
                 {
                     attacker.score += 1;
+                    println!("Projectile kill!")
                 }
                 // Mark projectile for removal
                 projectiles_to_remove.push(projectile_idx);
+            }
+            SimulationEvent::EnergyShared {
+                giver_id,
+                receiver_id,
+                amount,
+            } => {
+                println!("Shared energy");
+                energy_transfers.push((giver_id, receiver_id, amount));
             }
         }
     }
@@ -147,7 +166,7 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
 
         if let Some(&winner_id) = claimants.first() {
             if let Some(org) = state.organisms.iter_mut().find(|o| o.id == winner_id) {
-                org.gain_energy(state.food[food_id].energy, 1.0);
+                org.gain_energy(state.food[food_id].energy, params.max_energy);
                 org.score += 1;
             }
             state.food[food_id].consume();
@@ -171,5 +190,23 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
             age: 0.0,
         };
         state.food.push(corpse);
+    }
+
+    // Process energy transfers
+    for (giver_id, receiver_id, amount) in energy_transfers {
+        // Find giver and deduct energy
+        let mut energy_to_give = 0.0;
+        if let Some(giver) = state.organisms.iter_mut().find(|o| o.id == giver_id) {
+            // Only share if giver has enough energy
+            energy_to_give = amount.min(giver.energy * 0.5); // Max 50% of current energy
+            giver.consume_energy(energy_to_give);
+        }
+
+        // Find receiver and add energy
+        if energy_to_give > 0.0
+            && let Some(receiver) = state.organisms.iter_mut().find(|o| o.id == receiver_id)
+        {
+            receiver.gain_energy(energy_to_give, params.max_energy);
+        }
     }
 }

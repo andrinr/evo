@@ -154,14 +154,24 @@ pub fn draw_organisms(
             Color::from_rgba(100, 100, 100, 30),
         );
 
+        // Draw scent radius (faint circle)
+        let share_radius_screen = params.share_radius.to_screen(params, ui_panel_width);
+        draw_circle_lines(
+            screen_pos[0],
+            screen_pos[1],
+            share_radius_screen,
+            2.0,
+            Color::from_rgba(100, 100, 100, 30),
+        );
+
         // Highlight selected organism with a bright outline
         if is_selected {
             draw_circle_lines(
                 screen_pos[0],
                 screen_pos[1],
-                screen_radius + 3.0,
+                screen_radius + 5.0,
                 3.0,
-                Color::from_rgba(255, 255, 0, 255),
+                Color::from_rgba(255, 0, 0, 255),
             );
         }
 
