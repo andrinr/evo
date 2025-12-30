@@ -74,15 +74,15 @@ pub(super) fn draw_stats_panel(
             ui.label(format!("Food: {}/{}", ecosystem.food.len(), params.n_food));
             ui.label(format!(
                 "Graveyard: {}/{}",
-                ecosystem.graveyard.len(),
+                ecosystem.graveyard().len(),
                 params.graveyard_size
             ));
 
             // Show top graveyard fitness (what's being selected for breeding)
-            if !ecosystem.graveyard.is_empty() {
-                let top_fitness = ecosystem.graveyard[0].fitness();
-                let top_age = ecosystem.graveyard[0].age;
-                let top_score = ecosystem.graveyard[0].score;
+            if !ecosystem.graveyard().is_empty() {
+                let top_fitness = ecosystem.graveyard()[0].fitness();
+                let top_age = ecosystem.graveyard()[0].age;
+                let top_score = ecosystem.graveyard()[0].score;
                 ui.label(format!(
                     "Top Graveyard: fitness={:.1} (age={:.1}, score={})",
                     top_fitness, top_age, top_score

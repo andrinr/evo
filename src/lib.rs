@@ -25,6 +25,8 @@
 
 /// Core simulation logic and data structures.
 pub mod simulation {
+    /// Action execution system for organism behaviors.
+    pub mod actions;
     /// Neural network implementation for organism brains.
     pub mod brain;
     /// DNA utilities for genetic similarity and breeding.
@@ -33,6 +35,8 @@ pub mod simulation {
     pub mod ecosystem;
     /// Event system for thread-safe state updates.
     pub mod events;
+    /// Evolution and organism spawning system.
+    pub mod evolution;
     /// Food items that organisms can consume.
     pub mod food;
     /// Geometric utility functions for distance calculations.
@@ -50,4 +54,6 @@ pub mod simulation {
     pub mod projectile;
     /// Reproduction statistics tracking.
     pub mod reproduction;
+    /// Spatial indexing for efficient neighbor queries.
+    pub mod spatial;
 }

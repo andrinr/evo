@@ -6,18 +6,18 @@
 //! - Event-driven state updates for thread safety
 //! - Organism spawning, reproduction, and evolution
 
-use super::brain;
-use super::dna;
+use super::actions;
 use super::events;
+use super::evolution::EvolutionEngine;
 use super::food;
 use super::organism;
 use super::projectile;
+use super::spatial::SpatialIndex;
+pub use super::spatial::SpatialTrees;
 
 use super::geometric_utils::wrap_around_mut;
 use super::params::Params;
 use super::reproduction::ReproductionStats;
-use kdtree::distance::squared_euclidean;
-use kdtree::{ErrorKind as KdTreeError, KdTree};
 use ndarray::{Array1, s};
 use rand::Rng;
 use rayon::prelude::*;
@@ -42,9 +42,14 @@ pub struct Ecosystem {
     pub generation: u32,
     /// Statistics about reproduction strategy effectiveness.
     pub reproduction_stats: ReproductionStats,
-    /// Graveyard of deceased organisms for breeding selection.
-    /// Maintains the fittest organisms that have died, sorted by score (highest first).
-    pub graveyard: Vec<organism::Organism>,
+    /// Evolution engine managing graveyard and organism spawning.
+    #[serde(skip)]
+    #[serde(default = "default_evolution_engine")]
+    evolution_engine: EvolutionEngine,
+}
+
+fn default_evolution_engine() -> EvolutionEngine {
+    EvolutionEngine::new(1000)
 }
 
 impl Ecosystem {
@@ -86,16 +91,16 @@ impl Ecosystem {
             time: 0.,
             generation: params.n_organism as u32,
             reproduction_stats: ReproductionStats::default(),
-            graveyard: Vec::with_capacity(params.graveyard_size),
+            evolution_engine: EvolutionEngine::new(params.graveyard_size),
         }
     }
 
     /// Advances the simulation by one timestep with parallel organism updates.
     pub fn step(&mut self, params: &Params, dt: f32) {
-        let (kd_tree_orgs, kd_tree_food, kd_tree_projectiles) =
-            build_trees(self).expect("Failed to build kd-trees");
+        // Build spatial index for efficient neighbor queries
+        let spatial_index = SpatialIndex::build(self).expect("Failed to build spatial index");
 
-        // Clone the organisms vector
+        // Clone the organisms vector for parallel access
         let new_organisms = self.organisms.clone();
 
         let event_queue = Mutex::new(events::EventQueue::new());
@@ -105,12 +110,8 @@ impl Ecosystem {
         // Create perception system for generating brain inputs
         let perception = organism::Perception::default();
 
-        // Wrap trees in SpatialTrees struct for passing to perception system
-        let spatial_trees = SpatialTrees {
-            organisms: &kd_tree_orgs,
-            food: &kd_tree_food,
-            projectiles: &kd_tree_projectiles,
-        };
+        // Get reference to KD-trees for perception system
+        let spatial_trees = spatial_index.as_trees();
 
         // Create a snapshot Ecosystem for read-only access in the parallel loop
         let ecosystem_snapshot = self.clone();
@@ -118,35 +119,16 @@ impl Ecosystem {
         // parallel phase, only apply updates to entity itself
         // for events involing other objects, use the event queue for thread safety
         self.organisms.par_iter_mut().for_each(|entity| {
-            let mut local_events = Vec::new();
-
             // wrap around the screen
             wrap_around_mut(&mut entity.pos, params.box_width, params.box_height);
 
-            // Get nearest neighbors for collision detection
-            let neighbors_orgs = kd_tree_orgs
-                .within(
-                    &entity.pos.to_vec(),
-                    params.vision_radius.powi(2),
-                    &squared_euclidean,
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Error finding neighbors: {:?}", e);
-                });
-
-            let neighbor_foods = kd_tree_food
-                .within(
-                    &entity.pos.to_vec(),
-                    params.vision_radius.powi(2),
-                    &squared_euclidean,
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Error finding food neighbors: {:?}", e);
-                });
+            // Get nearest neighbors for collision and action detection
+            let neighbors_orgs = spatial_index.query_organisms(&entity.pos, params.vision_radius);
+            let neighbor_foods = spatial_index.query_food(&entity.pos, params.vision_radius);
 
             // Check for collisions with other organisms
             for (_, neighbor_id) in &neighbors_orgs {
-                let neighbor_org = &new_organisms[**neighbor_id];
+                let neighbor_org = &new_organisms[*neighbor_id];
                 if neighbor_org.id == entity.id {
                     continue; // skip self
                 }
@@ -163,8 +145,10 @@ impl Ecosystem {
             // Store brain inputs for visualization
             entity.last_brain_inputs.clone_from(&brain_inputs);
 
+            // Process brain outputs
             let brain_outputs = entity.brain.think(&brain_inputs);
 
+            // Update signal and memory from brain outputs
             entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
             entity.memory = brain_outputs
                 .slice(s![
@@ -172,85 +156,26 @@ impl Ecosystem {
                 ])
                 .to_owned();
 
-            let offset = params.signal_size + params.memory_size;
-            let rot = brain_outputs[offset];
-            entity.rot += rot * dt * 10.0; // rotation adjustment
-
-            // update age and cooldown
+            // update age, cooldown, and idle energy consumption
             entity.age_by(dt);
             entity.update_cooldown(dt);
+            entity.consume_energy(params.idle_energy_rate * dt);
 
-            let vel = brain_outputs[offset + 1]; // acceleration
-            let attack_strength = brain_outputs[offset + 2]; // attack action
-            let share_amount = brain_outputs[offset + 3]; // energy sharing
+            // Execute all organism actions
+            let action_events = actions::execute_all_actions(
+                entity,
+                &brain_outputs,
+                &neighbors_orgs,
+                &neighbor_foods,
+                &new_organisms,
+                &ecosystem_snapshot.food,
+                params,
+                dt,
+            );
 
-            let vel_vector = Array1::from_vec(vec![vel * entity.rot.cos(), vel * entity.rot.sin()])
-                * params.move_multiplier; // scale acceleration
-
-            entity.pos += &(&vel_vector * dt); // update velocity
-            entity.consume_energy(vel.abs() * dt * params.move_energy_rate); // energy consumption for acceleration
-            entity.consume_energy(rot.abs() * dt * params.rot_energy_rate); // energy consumption for rotation
-            entity.consume_energy(params.idle_energy_rate * dt); // additional energy consumption
-
-            // Handle attack/projectile shooting (with cooldown check)
-            if attack_strength > 0.1
-                && entity.energy > attack_strength * params.attack_cost_rate
-                && entity.can_attack()
-            {
-                entity.consume_energy(attack_strength * params.attack_cost_rate);
-                entity.reset_attack_cooldown(params.attack_cooldown);
-
-                local_events.push(events::SimulationEvent::ProjectileCreated {
-                    pos: entity.pos.clone(),
-                    rotation: entity.rot,
-                    damage: attack_strength * params.attack_damage_rate,
-                    owner_id: entity.id,
-                });
-            }
-
-            // Handle energy sharing with nearest organism
-            if share_amount > 0.1 && entity.energy > 0.2 {
-                // Find nearest organism within share_radius
-                let mut nearest_dist = f32::MAX;
-                let mut nearest_id = None;
-
-                for (_, neighbor_id) in &neighbors_orgs {
-                    let other = &new_organisms[**neighbor_id];
-                    if other.id != entity.id {
-                        let dist = (&entity.pos - &other.pos).mapv(f32::abs).sum();
-                        if dist < params.share_radius && dist < nearest_dist {
-                            nearest_dist = dist;
-                            nearest_id = Some(other.id);
-                        }
-                    }
-                }
-
-                if let Some(receiver_id) = nearest_id {
-                    local_events.push(events::SimulationEvent::EnergyShared {
-                        giver_id: entity.id,
-                        receiver_id,
-                        amount: share_amount,
-                    });
-                }
-            }
-
-            // consume all food within BODY_RADIUS
-            for (_, food_id) in &neighbor_foods {
-                let food_item = &ecosystem_snapshot.food[**food_id];
-                let org_food_dist = (&entity.pos - &food_item.pos).mapv(f32::abs).sum();
-                if org_food_dist < params.body_radius * 2.0 && !food_item.is_consumed() {
-                    entity.gain_energy(food_item.energy, params.max_energy);
-                    entity.score += 1; // increase score for reproduction
-
-                    local_events.push(events::SimulationEvent::FoodConsumed {
-                        organism_id: entity.id,
-                        food_id: **food_id,
-                    });
-                }
-            }
-
+            // Add action events to the queue
             let mut queue = event_queue.lock().unwrap();
-            for event in local_events {
+            for event in action_events {
                 queue.push(event);
             }
         });
@@ -260,21 +185,13 @@ impl Ecosystem {
         for (proj_idx, projectile) in self.projectiles.iter_mut().enumerate() {
             projectile.update(dt);
 
-            // Use KD tree to find nearby organisms within collision range
+            // Use spatial index to find nearby organisms within collision range
             let collision_radius = params.body_radius + params.projectile_radius;
-            let nearby_organisms = kd_tree_orgs
-                .within(
-                    &projectile.pos.to_vec(),
-                    collision_radius.powi(2),
-                    &squared_euclidean,
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Error finding nearby organisms for projectile: {e:?}");
-                });
+            let nearby_organisms = spatial_index.query_organisms(&projectile.pos, collision_radius);
 
             // Check collision with nearby organisms
             for (_, org_id) in &nearby_organisms {
-                let organism = &self.organisms[**org_id];
+                let organism = &self.organisms[*org_id];
 
                 if organism.id == projectile.owner_id {
                     continue; // Don't hit self
@@ -323,22 +240,9 @@ impl Ecosystem {
         // Record deaths and add to graveyard before removing organisms
         for organism in &self.organisms {
             if !organism.is_alive() {
-                self.reproduction_stats.record_death(organism);
-
-                // Add to graveyard (skip organisms that died too quickly)
-                if organism.age >= 0.5 {
-                    self.graveyard.push(organism.clone());
-                }
+                self.evolution_engine
+                    .record_death(organism, &mut self.reproduction_stats);
             }
-        }
-
-        // Maintain graveyard size by keeping only the fittest
-        if self.graveyard.len() > params.graveyard_size {
-            // Sort by fitness (age + score, highest first)
-            self.graveyard
-                .sort_by(|a, b| b.fitness().partial_cmp(&a.fitness()).unwrap());
-            // Keep only the top graveyard_size organisms
-            self.graveyard.truncate(params.graveyard_size);
         }
 
         // Clean up dead organisms and consumed food
@@ -359,11 +263,6 @@ impl Ecosystem {
     /// * `params` - Simulation parameters
     /// * `dt` - Delta time in seconds (spawn rates are per second)
     pub fn spawn(&mut self, params: &Params, dt: f32) {
-        // Sort graveyard by fitness in descending order (keep fittest at front)
-        // Note: graveyard is already sorted when organisms are added, but we sort here for safety
-        self.graveyard
-            .sort_by(|a, b| b.fitness().partial_cmp(&a.fitness()).unwrap());
-
         let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
         // spawn new organisms if there are less than n_organism (respecting max_organism cap)
@@ -388,150 +287,15 @@ impl Ecosystem {
             // Select a random genetic pool for this organism
             let target_pool_id = rand::rng().random_range(0..params.num_genetic_pools);
 
-            // Get organisms in this pool FROM GRAVEYARD (not from living organisms)
-            let pool_organisms: Vec<usize> = self
-                .graveyard
-                .iter()
-                .enumerate()
-                .filter(|(_, org)| org.pool_id == target_pool_id)
-                .map(|(idx, _)| idx)
-                .collect();
-
-            let mut new_organism = organism::Organism::new_random(
-                self.generation as usize,
-                &center,
-                params.signal_size,
-                params.memory_size,
-                params.num_vision_directions,
-                params.vision_radius,
-                params.fov,
-                params.layer_sizes.clone(),
+            // Use evolution engine to spawn organism
+            let new_organism = self.evolution_engine.spawn_organism(
+                self.generation,
                 target_pool_id,
+                &center,
                 params,
             );
 
-            new_organism.birth_generation = self.generation;
             self.generation += 1;
-
-            // Logarithmic random sampling for mutation scale
-            let min = 0.002f32;
-            let max = 0.2f32;
-            let log_min = min.ln();
-            let log_max = max.ln();
-            let log_mutation_scale = rand::rng().random_range(log_min..log_max);
-            let mutation_scale = log_mutation_scale.exp();
-
-            // If pool is empty in graveyard, seed from other pools in graveyard
-            if pool_organisms.is_empty() && !self.graveyard.is_empty() {
-                // Pick a random organism from any other pool in graveyard as a seed
-                let seed_idx = rand::rng().random_range(0..self.graveyard.len());
-                let seed = &self.graveyard[seed_idx];
-
-                // Clone and mutate the seed organism into the new pool
-                let mut cloned_brain = seed.brain.clone();
-                cloned_brain.mutate(mutation_scale * 2.0); // Extra mutation for diversity
-                new_organism.brain = cloned_brain;
-                new_organism.dna.clone_from(&seed.dna);
-                dna::mutate(&mut new_organism.dna, params.dna_mutation_rate * 2.0);
-            } else if pool_organisms.len() >= 2 {
-                // choose reproduction strategy randomly
-                let reproduction_strategy = rand::rng().random_range(0..2);
-
-                if reproduction_strategy == 0 {
-                    // Crossover: pick two organisms from top 15% (possibly from different pools)
-
-                    // Decide if we allow inter-pool breeding for this organism
-                    let allow_interbreeding =
-                        rand::rng().random::<f32>() < params.pool_interbreed_prob;
-
-                    let (candidates, is_same_pool) =
-                        if allow_interbreeding && self.graveyard.len() >= 2 {
-                            // Inter-pool breeding: select from ALL graveyard organisms
-                            let all_indices: Vec<usize> = (0..self.graveyard.len()).collect();
-                            (all_indices, false)
-                        } else {
-                            // Same-pool breeding: select from THIS pool only
-                            (pool_organisms.clone(), true)
-                        };
-
-                    if candidates.len() >= 2 {
-                        let top_count = (candidates.len() as f32 * 0.15).max(2.0) as usize;
-                        let top_count = top_count.min(candidates.len());
-
-                        // Pick two different parents from top 15%
-                        let parent_1_idx = rand::rng().random_range(0..top_count);
-                        let mut parent_2_idx = rand::rng().random_range(0..top_count);
-
-                        // Ensure parents are different
-                        while parent_2_idx == parent_1_idx && top_count > 1 {
-                            parent_2_idx = rand::rng().random_range(0..top_count);
-                        }
-
-                        let parent_1 = &self.graveyard[candidates[parent_1_idx]];
-                        let parent_2 = &self.graveyard[candidates[parent_2_idx]];
-
-                        // Track parent scores for later comparison
-                        let avg_parent_score = (parent_1.score + parent_2.score) as f64 / 2.0;
-                        new_organism.parent_avg_score = avg_parent_score;
-
-                        // Mark reproduction method
-                        if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
-                            new_organism.reproduction_method = 3; // inter-pool sexual
-                        } else {
-                            new_organism.reproduction_method = 2; // same-pool sexual
-                        }
-
-                        // Perform crossover
-                        let crossover_brain =
-                            brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
-                        new_organism.brain = crossover_brain;
-
-                        // Inherit DNA from parents with crossover and mutation
-                        let alpha = rand::rng().random::<f32>();
-                        new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
-                        dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
-
-                        // If parents from different pools, apply extra mutation for diversity
-                        if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
-                            new_organism.brain.mutate(mutation_scale * 0.5);
-                        }
-                    }
-                } else if pool_organisms.len() >= 10 {
-                    // Asexual: clone with mutation from THIS POOL (from graveyard)
-                    let parent_pool_idx = rand::rng().random_range(0..pool_organisms.len() / 10);
-                    let parent = &self.graveyard[pool_organisms[parent_pool_idx]];
-
-                    // Track parent score for later comparison
-                    new_organism.parent_avg_score = parent.score as f64;
-                    new_organism.reproduction_method = 1; // asexual
-
-                    let mut cloned_brain = parent.brain.clone();
-                    cloned_brain.mutate(mutation_scale);
-                    new_organism.brain = cloned_brain;
-
-                    // Inherit DNA with mutation
-                    new_organism.dna.clone_from(&parent.dna);
-                    for i in 0..2 {
-                        let mutation =
-                            rand::rng().random_range(-1.0..1.0) * params.dna_mutation_rate;
-                        new_organism.dna[i] = (new_organism.dna[i] + mutation).clamp(0.0, 1.0);
-                    }
-                }
-            } else if pool_organisms.len() == 1 {
-                // Only one organism in pool - clone and mutate it (from graveyard)
-                let parent = &self.graveyard[pool_organisms[0]];
-
-                // Track parent score for later comparison
-                new_organism.parent_avg_score = parent.score as f64;
-                new_organism.reproduction_method = 1; // asexual
-
-                let mut cloned_brain = parent.brain.clone();
-                cloned_brain.mutate(mutation_scale);
-                new_organism.brain = cloned_brain;
-                new_organism.dna.clone_from(&parent.dna);
-                dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
-            }
-
             self.organisms.push(new_organism);
         }
 
@@ -573,32 +337,9 @@ impl Ecosystem {
         let ecosystem = serde_json::from_str(&json)?;
         Ok(ecosystem)
     }
-}
 
-/// Type alias for 2D spatial KD-tree used for efficient neighbor queries.
-pub type Tree2D = KdTree<f32, usize, Vec<f32>>;
-
-/// Container for pre-built KD-trees for spatial queries.
-pub struct SpatialTrees<'a> {
-    /// KD-tree for organism positions.
-    pub organisms: &'a Tree2D,
-    /// KD-tree for food positions.
-    pub food: &'a Tree2D,
-    /// KD-tree for projectile positions.
-    pub projectiles: &'a Tree2D,
-}
-
-fn build_tree<T>(items: &[T], get_pos: impl Fn(&T) -> Vec<f32>) -> Result<Tree2D, KdTreeError> {
-    let mut tree = KdTree::with_capacity(2, items.len());
-    for (i, item) in items.iter().enumerate() {
-        tree.add(get_pos(item), i)?;
+    /// Returns a reference to the graveyard.
+    pub fn graveyard(&self) -> &[organism::Organism] {
+        self.evolution_engine.graveyard()
     }
-    Ok(tree)
-}
-
-fn build_trees(ecosystem: &Ecosystem) -> Result<(Tree2D, Tree2D, Tree2D), KdTreeError> {
-    let kd_tree_orgs = build_tree(&ecosystem.organisms, |org| org.pos.to_vec())?;
-    let kd_tree_food = build_tree(&ecosystem.food, |food| food.pos.to_vec())?;
-    let kd_tree_projectiles = build_tree(&ecosystem.projectiles, |proj| proj.pos.to_vec())?;
-    Ok((kd_tree_orgs, kd_tree_food, kd_tree_projectiles))
 }
