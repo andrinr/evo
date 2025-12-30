@@ -13,7 +13,7 @@ use super::food;
 use super::organism;
 use super::projectile;
 
-use super::geometric_utils::{line_circle_distance, wrap_around_mut};
+use super::geometric_utils::wrap_around_mut;
 use super::params::Params;
 use super::reproduction::ReproductionStats;
 use kdtree::distance::squared_euclidean;
@@ -102,207 +102,63 @@ impl Ecosystem {
 
         self.time += dt;
 
+        // Create perception system for generating brain inputs
+        let perception = organism::Perception::default();
+
+        // Wrap trees in SpatialTrees struct for passing to perception system
+        let spatial_trees = SpatialTrees {
+            organisms: &kd_tree_orgs,
+            food: &kd_tree_food,
+            projectiles: &kd_tree_projectiles,
+        };
+
+        // Create a snapshot Ecosystem for read-only access in the parallel loop
+        let ecosystem_snapshot = self.clone();
+
         // parallel phase, only apply updates to entity itself
         // for events involing other objects, use the event queue for thread safety
         self.organisms.par_iter_mut().for_each(|entity| {
             let mut local_events = Vec::new();
 
-            let vision_vectors = entity.get_vision_vectors();
-
             // wrap around the screen
             wrap_around_mut(&mut entity.pos, params.box_width, params.box_height);
 
-            // get nearest neighbors
-            let neighbors_orgs = kd_tree_orgs.within(
-                &entity.pos.to_vec(),
-                params.vision_radius.powi(2),
-                &squared_euclidean,
-            );
-
-            let neighbor_foods = kd_tree_food.within(
-                &entity.pos.to_vec(),
-                params.vision_radius.powi(2),
-                &squared_euclidean,
-            );
-
-            let neighbor_projectiles = kd_tree_projectiles.within(
-                &entity.pos.to_vec(),
-                params.vision_radius.powi(2),
-                &squared_euclidean,
-            );
-
-            // the above returns a Result, so we need to handle the error
-            let neighbors_orgs = match neighbors_orgs {
-                Ok(neighbors) => neighbors,
-                Err(e) => {
+            // Get nearest neighbors for collision detection
+            let neighbors_orgs = kd_tree_orgs
+                .within(
+                    &entity.pos.to_vec(),
+                    params.vision_radius.powi(2),
+                    &squared_euclidean,
+                )
+                .unwrap_or_else(|e| {
                     panic!("Error finding neighbors: {:?}", e);
-                }
-            };
+                });
 
-            let neighbor_foods = match neighbor_foods {
-                Ok(neighbors) => neighbors,
-                Err(e) => {
+            let neighbor_foods = kd_tree_food
+                .within(
+                    &entity.pos.to_vec(),
+                    params.vision_radius.powi(2),
+                    &squared_euclidean,
+                )
+                .unwrap_or_else(|e| {
                     panic!("Error finding food neighbors: {:?}", e);
-                }
-            };
-
-            let neighbor_projectiles = match neighbor_projectiles {
-                Ok(neighbors) => neighbors,
-                Err(e) => {
-                    panic!("Error finding projectile neighbors: {:?}", e);
-                }
-            };
-
-            let mut brain_inputs = Array1::zeros(
-                3 * params.num_vision_directions // distance, pool_match, is_organism per ray
-                    + params.signal_size + 1 // scent inputs (RGB + DNA distance)
-                    + params.memory_size
-                    + 1, // energy
-            );
-
-            for (i, vision_vector) in vision_vectors.iter().enumerate() {
-                let end_point = &entity.pos + vision_vector;
-                let mut min_distance = f32::MAX;
-
-                // detect neighbor organisms within the vision vector
-                for (_, neighbor_id) in &neighbors_orgs {
-                    let neighbor_org = &new_organisms[**neighbor_id];
-
-                    if neighbor_org.id == entity.id {
-                        continue; // skip self
-                    }
-                    let distance = line_circle_distance(&entity.pos, &end_point, &neighbor_org.pos);
-                    if distance < params.body_radius && distance < min_distance {
-                        min_distance = distance;
-                        let base_idx = 3 * i;
-                        brain_inputs[base_idx] = distance;
-                        // Pool match: 1.0 if same pool, 0.0 if different pool
-                        brain_inputs[base_idx + 1] = if neighbor_org.pool_id == entity.pool_id {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                        // Is organism: 1.0 for organisms, 0.0 for food/projectiles
-                        brain_inputs[base_idx + 2] = 1.0;
-                    }
-
-                    let org_org_distance = (&entity.pos - &neighbor_org.pos).mapv(f32::abs).sum();
-
-                    if org_org_distance < params.body_radius * 2.0 {
-                        entity.kill(); // collision with another organism
-                    }
-                }
-
-                // detect neighbor food within the vision vector
-                for (_, food_id) in &neighbor_foods {
-                    let food_item = &self.food[**food_id];
-                    let distance = line_circle_distance(&entity.pos, &end_point, &food_item.pos);
-                    if distance < params.body_radius && distance < min_distance {
-                        min_distance = distance;
-                        let base_idx = 3 * i;
-                        brain_inputs[base_idx] = distance; // distance to food
-                        brain_inputs[base_idx + 1] = 0.0; // no pool match for food
-                        brain_inputs[base_idx + 2] = 0.0; // is_organism = 0 for food
-                    }
-                }
-
-                // detect neighbor projectiles within the vision vector
-                for (_, projectile_id) in &neighbor_projectiles {
-                    let projectile_item = &self.projectiles[**projectile_id];
-
-                    // Skip projectiles owned by this organism
-                    if projectile_item.owner_id == entity.id {
-                        continue;
-                    }
-
-                    let distance =
-                        line_circle_distance(&entity.pos, &end_point, &projectile_item.pos);
-                    if distance < params.projectile_radius && distance < min_distance {
-                        min_distance = distance;
-                        let base_idx = 3 * i;
-                        brain_inputs[base_idx] = distance; // distance to projectile
-                        brain_inputs[base_idx + 1] = 0.0; // no pool match for projectiles
-                        brain_inputs[base_idx + 2] = -1.0; // is_organism = 0 for projectiles
-                    }
-                }
-            }
-
-            // Calculate scent: average signal of nearby organisms and food within scent_radius
-            let scent_orgs = kd_tree_orgs
-                .within(
-                    &entity.pos.to_vec(),
-                    params.scent_radius.powi(2),
-                    &squared_euclidean,
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Error finding scent neighbors (orgs): {e:?}");
                 });
 
-            let scent_foods = kd_tree_food
-                .within(
-                    &entity.pos.to_vec(),
-                    params.scent_radius.powi(2),
-                    &squared_euclidean,
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Error finding scent neighbors (food): {e:?}");
-                });
-
-            // Scent: signal (RGB) + DNA distance to nearest organism
-            let mut scent_signal = Array1::zeros(params.signal_size);
-            let mut scent_count = 0;
-            let mut closest_dna_distance = 0.0f32;
-            let mut min_org_distance = f32::MAX;
-
-            // Add organism signals and find closest organism for DNA distance
-            for (_, org_id) in &scent_orgs {
-                let neighbor_org = &new_organisms[**org_id];
+            // Check for collisions with other organisms
+            for (_, neighbor_id) in &neighbors_orgs {
+                let neighbor_org = &new_organisms[**neighbor_id];
                 if neighbor_org.id == entity.id {
-                    continue; // Skip self
+                    continue; // skip self
                 }
-                // Add all signal components (RGB)
-                for i in 0..params.signal_size {
-                    scent_signal[i] += neighbor_org.signal[i];
-                }
-                scent_count += 1;
-
-                // Track closest organism for DNA distance
-                let dist = (&entity.pos - &neighbor_org.pos)
-                    .mapv(|x| x * x)
-                    .sum()
-                    .sqrt();
-                if dist < min_org_distance {
-                    min_org_distance = dist;
-                    // Calculate DNA distance with periodic boundary conditions
-                    closest_dna_distance = dna::periodic_distance(&entity.dna, &neighbor_org.dna);
+                let org_org_distance = (&entity.pos - &neighbor_org.pos).mapv(f32::abs).sum();
+                if org_org_distance < params.body_radius * 2.0 {
+                    entity.kill(); // collision with another organism
                 }
             }
 
-            // Add food signals (no DNA for food)
-            for (_, _food_id) in &scent_foods {
-                scent_count += 1;
-                scent_signal[2] += 1.0; // B-channel
-            }
-
-            if scent_count > 0 {
-                scent_signal /= scent_count as f32; // Average
-            }
-
-            let mut offset = 3 * params.num_vision_directions;
-            // Add scent to inputs (signal)
-            brain_inputs
-                .slice_mut(s![offset..offset + params.signal_size])
-                .assign(&scent_signal);
-            offset += params.signal_size;
-            // Add DNA distance to closest organism
-            brain_inputs[offset] = closest_dna_distance;
-            offset += 1;
-
-            // Add the organism's own memory to the inputs
-            brain_inputs
-                .slice_mut(s![offset..offset + params.memory_size])
-                .assign(&entity.memory);
-            brain_inputs[offset + params.memory_size] = entity.energy; // energy
+            // Generate brain inputs using perception system
+            let brain_inputs =
+                perception.perceive(entity, &ecosystem_snapshot, params, Some(&spatial_trees));
 
             // Store brain inputs for visualization
             entity.last_brain_inputs.clone_from(&brain_inputs);
@@ -380,7 +236,7 @@ impl Ecosystem {
 
             // consume all food within BODY_RADIUS
             for (_, food_id) in &neighbor_foods {
-                let food_item = &self.food[**food_id];
+                let food_item = &ecosystem_snapshot.food[**food_id];
                 let org_food_dist = (&entity.pos - &food_item.pos).mapv(f32::abs).sum();
                 if org_food_dist < params.body_radius * 2.0 && !food_item.is_consumed() {
                     entity.gain_energy(food_item.energy, params.max_energy);
@@ -719,7 +575,18 @@ impl Ecosystem {
     }
 }
 
-type Tree2D = KdTree<f32, usize, Vec<f32>>;
+/// Type alias for 2D spatial KD-tree used for efficient neighbor queries.
+pub type Tree2D = KdTree<f32, usize, Vec<f32>>;
+
+/// Container for pre-built KD-trees for spatial queries.
+pub struct SpatialTrees<'a> {
+    /// KD-tree for organism positions.
+    pub organisms: &'a Tree2D,
+    /// KD-tree for food positions.
+    pub food: &'a Tree2D,
+    /// KD-tree for projectile positions.
+    pub projectiles: &'a Tree2D,
+}
 
 fn build_tree<T>(items: &[T], get_pos: impl Fn(&T) -> Vec<f32>) -> Result<Tree2D, KdTreeError> {
     let mut tree = KdTree::with_capacity(2, items.len());
