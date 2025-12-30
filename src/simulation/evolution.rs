@@ -104,14 +104,19 @@ impl EvolutionEngine {
         // Apply evolution strategy based on pool population
         if pool_organisms.is_empty() && !sorted_graveyard.is_empty() {
             // Seed from other pools
-            self.seed_from_other_pool(&mut new_organism, &sorted_graveyard, mutation_scale, params);
+            Self::seed_from_other_pool(
+                &mut new_organism,
+                &sorted_graveyard,
+                mutation_scale,
+                params,
+            );
         } else if pool_organisms.len() >= 2 {
             // Choose reproduction strategy
             let reproduction_strategy = rand::rng().random_range(0..2);
 
             if reproduction_strategy == 0 {
                 // Sexual reproduction (crossover)
-                self.sexual_reproduction(
+                Self::sexual_reproduction(
                     &mut new_organism,
                     &pool_organisms,
                     &sorted_graveyard,
@@ -120,7 +125,7 @@ impl EvolutionEngine {
                 );
             } else if pool_organisms.len() >= 10 {
                 // Asexual reproduction (cloning with mutation)
-                self.asexual_reproduction(
+                Self::asexual_reproduction(
                     &mut new_organism,
                     &pool_organisms,
                     &sorted_graveyard,
@@ -130,7 +135,7 @@ impl EvolutionEngine {
             }
         } else if pool_organisms.len() == 1 {
             // Only one organism - clone and mutate
-            self.clone_single_parent(
+            Self::clone_single_parent(
                 &mut new_organism,
                 &sorted_graveyard[pool_organisms[0]],
                 mutation_scale,
@@ -143,7 +148,6 @@ impl EvolutionEngine {
 
     /// Seeds a new organism from a different genetic pool.
     fn seed_from_other_pool(
-        &self,
         new_organism: &mut Organism,
         graveyard: &[Organism],
         mutation_scale: f32,
@@ -161,7 +165,6 @@ impl EvolutionEngine {
 
     /// Performs sexual reproduction (crossover between two parents).
     fn sexual_reproduction(
-        &self,
         new_organism: &mut Organism,
         pool_organisms: &[usize],
         graveyard: &[Organism],
@@ -225,7 +228,6 @@ impl EvolutionEngine {
 
     /// Performs asexual reproduction (cloning with mutation).
     fn asexual_reproduction(
-        &self,
         new_organism: &mut Organism,
         pool_organisms: &[usize],
         graveyard: &[Organism],
@@ -252,7 +254,6 @@ impl EvolutionEngine {
 
     /// Clones a single parent organism.
     fn clone_single_parent(
-        &self,
         new_organism: &mut Organism,
         parent: &Organism,
         mutation_scale: f32,

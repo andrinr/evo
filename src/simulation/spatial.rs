@@ -109,10 +109,12 @@ impl SpatialIndex {
         &self.organisms
     }
 
+    /// Get direct reference to the food KD-tree.
     pub fn food_tree(&self) -> &Tree2D {
         &self.food
     }
 
+    /// Get direct reference to the projectiles KD-tree.
     pub fn projectiles_tree(&self) -> &Tree2D {
         &self.projectiles
     }
