@@ -41,7 +41,7 @@ case_sensitive_file_extension_comparisons = "allow"
 semicolon_if_nothing_returned = "allow"
 
 [dependencies]
-macroquad = { version = "0.4.14", default-features = false }
+macroquad = { version = "0.4.14", default-features = false, features = [] }
 egui-macroquad = "0.17.3"
 egui_plot = "0.31"
 ndarray = { version = "0.16.0", features = ["serde", "rayon"] }

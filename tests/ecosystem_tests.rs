@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 #![allow(clippy::float_cmp)]
 
-use evo::simulation::ecosystem::{Ecosystem, Params};
+use evo::simulation::brain;
+use evo::simulation::ecosystem::Ecosystem;
+use evo::simulation::params::Params;
 use ndarray::Array1;
 
 fn create_test_params() -> Params {
@@ -52,6 +54,14 @@ fn create_test_params() -> Params {
         food_spawn_rate: 1.0,
         food_lifetime: 0.0,
         num_genetic_pools: 1,
+        pool_interbreed_prob: 0.0,
+        brain_type: brain::BrainType::MLP,
+        transformer_model_dim: 64,
+        transformer_num_blocks: 2,
+        transformer_num_heads: 4,
+        transformer_head_dim: 16,
+        transformer_ff_dim: 128,
+        graveyard_size: 400,
     }
 }
 

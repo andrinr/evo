@@ -1,4 +1,5 @@
 use crate::simulation;
+use crate::simulation::params::Params;
 use macroquad::prelude::*;
 use ndarray::Array1;
 
@@ -7,21 +8,16 @@ fn get_pool_color(pool_id: usize) -> Color {
     match pool_id % 10 {
         0 => Color::from_rgba(255, 100, 100, 255), // Red
         1 => Color::from_rgba(100, 150, 255, 255), // Blue
-        2 => Color::from_rgba(100, 255, 100, 255), // Green
-        3 => Color::from_rgba(255, 255, 100, 255), // Yellow
-        4 => Color::from_rgba(255, 100, 255, 255), // Magenta
-        5 => Color::from_rgba(100, 255, 255, 255), // Cyan
-        6 => Color::from_rgba(255, 150, 100, 255), // Orange
-        7 => Color::from_rgba(200, 100, 255, 255), // Purple
-        8 => Color::from_rgba(255, 200, 150, 255), // Peach
-        9 => Color::from_rgba(150, 255, 200, 255), // Mint
+        2 => Color::from_rgba(255, 255, 100, 255), // Yellow
+        3 => Color::from_rgba(255, 100, 255, 255), // Magenta
+        4 => Color::from_rgba(100, 255, 255, 255), // Cyan
         _ => Color::from_rgba(200, 200, 200, 255), // Gray (fallback)
     }
 }
 
 fn get_organism_at_mouse(
     ecosystem: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &Params,
     ui_panel_width: f32,
 ) -> Option<usize> {
     let (mouse_x, mouse_y) = mouse_position();
@@ -59,7 +55,7 @@ fn get_organism_at_mouse(
 
 pub fn get_hovered_organism(
     ecosystem: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &Params,
     ui_panel_width: f32,
 ) -> Option<usize> {
     get_organism_at_mouse(ecosystem, params, ui_panel_width)
@@ -67,7 +63,7 @@ pub fn get_hovered_organism(
 
 pub fn handle_organism_click(
     ecosystem: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &Params,
     ui_panel_width: f32,
 ) -> Option<usize> {
     if is_mouse_button_pressed(MouseButton::Left) {
@@ -79,20 +75,12 @@ pub fn handle_organism_click(
 
 trait ToScreen {
     type Output;
-    fn to_screen(
-        &self,
-        params: &simulation::ecosystem::Params,
-        ui_panel_width: f32,
-    ) -> Self::Output;
+    fn to_screen(&self, params: &Params, ui_panel_width: f32) -> Self::Output;
 }
 
 impl ToScreen for Array1<f32> {
     type Output = Array1<f32>;
-    fn to_screen(
-        &self,
-        params: &simulation::ecosystem::Params,
-        ui_panel_width: f32,
-    ) -> Array1<f32> {
+    fn to_screen(&self, params: &Params, ui_panel_width: f32) -> Array1<f32> {
         let screen_w = screen_width() - ui_panel_width;
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -103,7 +91,7 @@ impl ToScreen for Array1<f32> {
 
 impl ToScreen for f32 {
     type Output = f32;
-    fn to_screen(&self, params: &simulation::ecosystem::Params, ui_panel_width: f32) -> f32 {
+    fn to_screen(&self, params: &Params, ui_panel_width: f32) -> f32 {
         let screen_w = screen_width() - ui_panel_width;
         let screen_h = screen_height();
         let scale_x = screen_w / params.box_width;
@@ -113,11 +101,7 @@ impl ToScreen for f32 {
     }
 }
 
-pub fn draw_food(
-    state: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
-    ui_panel_width: f32,
-) {
+pub fn draw_food(state: &simulation::ecosystem::Ecosystem, params: &Params, ui_panel_width: f32) {
     // draw food
     state.food.iter().for_each(|entity| {
         if entity.energy > 0.0 {
@@ -127,7 +111,7 @@ pub fn draw_food(
                 screen_pos[0],
                 screen_pos[1],
                 scaled_radius,
-                Color::from_rgba(0, 100, 255, 255),
+                Color::from_rgba(0, 200, 100, 255),
             );
         }
     });
@@ -135,7 +119,7 @@ pub fn draw_food(
 
 pub fn draw_projectiles(
     state: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &Params,
     ui_panel_width: f32,
 ) {
     state.projectiles.iter().for_each(|projectile| {
@@ -145,14 +129,14 @@ pub fn draw_projectiles(
             screen_pos[0],
             screen_pos[1],
             scaled_radius,
-            Color::from_rgba(255, 0, 0, 255),
+            Color::from_rgba(0, 0, 0, 255),
         );
     });
 }
 
 pub fn draw_organisms(
     state: &simulation::ecosystem::Ecosystem,
-    params: &simulation::ecosystem::Params,
+    params: &Params,
     ui_panel_width: f32,
     selected_id: Option<usize>,
 ) {

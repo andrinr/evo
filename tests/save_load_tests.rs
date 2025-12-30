@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 #![allow(clippy::float_cmp)]
 
-use evo::simulation::ecosystem::{Ecosystem, Params};
+use evo::simulation::brain;
+use evo::simulation::ecosystem::Ecosystem;
+use evo::simulation::params::Params;
 use std::fs;
 
 fn create_test_params() -> Params {
@@ -52,6 +54,14 @@ fn create_test_params() -> Params {
         food_spawn_rate: 1.0,
         food_lifetime: 0.0,
         num_genetic_pools: 1,
+        pool_interbreed_prob: 0.0,
+        brain_type: brain::BrainType::MLP,
+        transformer_model_dim: 64,
+        transformer_num_blocks: 2,
+        transformer_num_heads: 4,
+        transformer_head_dim: 16,
+        transformer_ff_dim: 128,
+        graveyard_size: 400,
     }
 }
 
@@ -159,29 +169,27 @@ fn test_save_and_load_preserves_brain_weights() {
     // Load
     let loaded_ecosystem = Ecosystem::load_from_file(save_path).expect("Failed to load");
 
-    // Check that brain weights are preserved
+    // Check that brain weights are preserved (using flattened representation)
     for (original, loaded) in ecosystem
         .organisms
         .iter()
         .zip(loaded_ecosystem.organisms.iter())
     {
-        assert_eq!(original.brain.layers.len(), loaded.brain.layers.len());
+        let orig_flat = original.brain.to_flat_vector();
+        let loaded_flat = loaded.brain.to_flat_vector();
 
-        for (orig_layer, loaded_layer) in
-            original.brain.layers.iter().zip(loaded.brain.layers.iter())
-        {
-            assert_eq!(orig_layer.weights.shape(), loaded_layer.weights.shape());
-            assert_eq!(orig_layer.biases.len(), loaded_layer.biases.len());
+        assert_eq!(
+            orig_flat.len(),
+            loaded_flat.len(),
+            "Brain parameter count mismatch"
+        );
 
-            // Check that values match
-            for (orig_val, loaded_val) in orig_layer.weights.iter().zip(loaded_layer.weights.iter())
-            {
-                assert!((orig_val - loaded_val).abs() < 0.0001);
-            }
-
-            for (orig_val, loaded_val) in orig_layer.biases.iter().zip(loaded_layer.biases.iter()) {
-                assert!((orig_val - loaded_val).abs() < 0.0001);
-            }
+        // Check that values match
+        for (orig_val, loaded_val) in orig_flat.iter().zip(loaded_flat.iter()) {
+            assert!(
+                (orig_val - loaded_val).abs() < 0.0001,
+                "Brain weights don't match"
+            );
         }
     }
 

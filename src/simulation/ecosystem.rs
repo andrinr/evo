@@ -13,8 +13,9 @@ use super::food;
 use super::organism;
 use super::projectile;
 
-use geo::algorithm::Distance;
-use geo::{Euclidean, Line, Point};
+use super::geometric_utils::{line_circle_distance, wrap_around_mut};
+use super::params::Params;
+use super::reproduction::ReproductionStats;
 use kdtree::distance::squared_euclidean;
 use kdtree::{ErrorKind as KdTreeError, KdTree};
 use ndarray::{Array1, s};
@@ -22,82 +23,6 @@ use rand::Rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-
-/// Simulation parameters that control ecosystem behavior.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Params {
-    /// Organism collision radius.
-    pub body_radius: f32,
-    /// Maximum distance organisms can see.
-    pub vision_radius: f32,
-    /// Maximum distance organisms can smell food.
-    pub scent_radius: f32,
-    /// Maximum distance for energy sharing between organisms.
-    pub share_radius: f32,
-    /// Maximum DNA distance for breeding (hard cutoff).
-    /// Only organisms with DNA distance less than this value can interbreed.
-    /// Typical range: 0.1-0.3 (max periodic distance is ~0.707).
-    pub dna_breeding_distance: f32,
-    /// DNA mutation rate (standard deviation of Gaussian noise).
-    pub dna_mutation_rate: f32,
-    /// Energy consumed per second while idle.
-    pub idle_energy_rate: f32,
-    /// Energy cost per unit of movement.
-    pub move_energy_rate: f32,
-    /// Movement speed multiplier.
-    pub move_multiplier: f32,
-    /// Energy cost per unit of rotation.
-    pub rot_energy_rate: f32,
-    /// Number of vision rays per organism.
-    pub num_vision_directions: usize,
-    /// Field of view angle in radians.
-    pub fov: f32,
-    /// Number of signal outputs (RGB color).
-    pub signal_size: usize,
-    /// Number of memory cells per organism.
-    pub memory_size: usize,
-    /// Target organism population.
-    pub n_organism: usize,
-    /// Maximum organism population (hard cap).
-    pub max_organism: usize,
-    /// Target food item count.
-    pub n_food: usize,
-    /// Maximum food item count (hard cap).
-    pub max_food: usize,
-    /// Simulation area width.
-    pub box_width: f32,
-    /// Simulation area height.
-    pub box_height: f32,
-    /// Neural network layer dimensions.
-    pub layer_sizes: Vec<usize>,
-    /// Energy cost multiplier for attacks.
-    pub attack_cost_rate: f32,
-    /// Damage multiplier for attacks.
-    pub attack_damage_rate: f32,
-    /// Cooldown duration between attacks (seconds).
-    pub attack_cooldown: f32,
-    /// Fraction of organism energy converted to corpse food.
-    pub corpse_energy_ratio: f32,
-    /// Maximum energy an organism can have.
-    pub max_energy: f32,
-    /// Energy value of spawned food items.
-    pub food_energy: f32,
-    /// Projectile travel speed.
-    pub projectile_speed: f32,
-    /// Maximum projectile travel distance.
-    pub projectile_range: f32,
-    /// Projectile collision radius.
-    pub projectile_radius: f32,
-    /// Organisms spawned per second when below target population.
-    pub organism_spawn_rate: f32,
-    /// Food items spawned per second when below target count.
-    pub food_spawn_rate: f32,
-    /// Maximum lifetime of food in seconds
-    pub food_lifetime: f32,
-    /// Number of genetic pools (isolated breeding populations).
-    /// Organisms can only breed within their pool. Range: 1-10.
-    pub num_genetic_pools: usize,
-}
 
 /// The main ecosystem containing all simulation state.
 ///
@@ -115,6 +40,11 @@ pub struct Ecosystem {
     pub time: f32,
     /// Generation counter (incremented with each spawn).
     pub generation: u32,
+    /// Statistics about reproduction strategy effectiveness.
+    pub reproduction_stats: ReproductionStats,
+    /// Graveyard of deceased organisms for breeding selection.
+    /// Maintains the fittest organisms that have died, sorted by score (highest first).
+    pub graveyard: Vec<organism::Organism>,
 }
 
 impl Ecosystem {
@@ -138,6 +68,7 @@ impl Ecosystem {
                 params.fov,
                 params.layer_sizes.clone(),
                 pool_id,
+                params,
             );
 
             organisms.push(entity);
@@ -154,6 +85,8 @@ impl Ecosystem {
             projectiles: Vec::new(),
             time: 0.,
             generation: params.n_organism as u32,
+            reproduction_stats: ReproductionStats::default(),
+            graveyard: Vec::with_capacity(params.graveyard_size),
         }
     }
 
@@ -220,8 +153,6 @@ impl Ecosystem {
                 }
             };
 
-            // collect all the signals from neighbor organisms and food
-            // Input structure: [vision rays (distance + pool_match + is_organism)] + [scent (signal)] + [DNA distance] + [memory] + [energy]
             let mut brain_inputs = Array1::zeros(
                 3 * params.num_vision_directions // distance, pool_match, is_organism per ray
                     + params.signal_size + 1 // scent inputs (RGB + DNA distance)
@@ -291,7 +222,7 @@ impl Ecosystem {
                         let base_idx = 3 * i;
                         brain_inputs[base_idx] = distance; // distance to projectile
                         brain_inputs[base_idx + 1] = 0.0; // no pool match for projectiles
-                        brain_inputs[base_idx + 2] = 0.0; // is_organism = 0 for projectiles
+                        brain_inputs[base_idx + 2] = -1.0; // is_organism = 0 for projectiles
                     }
                 }
             }
@@ -533,6 +464,27 @@ impl Ecosystem {
 
         events::apply_events(self, params, event_queue.into_inner().unwrap());
 
+        // Record deaths and add to graveyard before removing organisms
+        for organism in &self.organisms {
+            if !organism.is_alive() {
+                self.reproduction_stats.record_death(organism);
+
+                // Add to graveyard (skip organisms that died too quickly)
+                if organism.age >= 0.5 {
+                    self.graveyard.push(organism.clone());
+                }
+            }
+        }
+
+        // Maintain graveyard size by keeping only the fittest
+        if self.graveyard.len() > params.graveyard_size {
+            // Sort by fitness (age + score, highest first)
+            self.graveyard
+                .sort_by(|a, b| b.fitness().partial_cmp(&a.fitness()).unwrap());
+            // Keep only the top graveyard_size organisms
+            self.graveyard.truncate(params.graveyard_size);
+        }
+
         // Clean up dead organisms and consumed food
         self.organisms.retain(super::organism::Organism::is_alive);
         self.food.retain(|food_item| !food_item.is_consumed());
@@ -551,8 +503,10 @@ impl Ecosystem {
     /// * `params` - Simulation parameters
     /// * `dt` - Delta time in seconds (spawn rates are per second)
     pub fn spawn(&mut self, params: &Params, dt: f32) {
-        // sort organisms by score in descending order
-        self.organisms.sort_by(|a, b| b.score.cmp(&a.score));
+        // Sort graveyard by fitness in descending order (keep fittest at front)
+        // Note: graveyard is already sorted when organisms are added, but we sort here for safety
+        self.graveyard
+            .sort_by(|a, b| b.fitness().partial_cmp(&a.fitness()).unwrap());
 
         let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
@@ -578,9 +532,9 @@ impl Ecosystem {
             // Select a random genetic pool for this organism
             let target_pool_id = rand::rng().random_range(0..params.num_genetic_pools);
 
-            // Get organisms in this pool
+            // Get organisms in this pool FROM GRAVEYARD (not from living organisms)
             let pool_organisms: Vec<usize> = self
-                .organisms
+                .graveyard
                 .iter()
                 .enumerate()
                 .filter(|(_, org)| org.pool_id == target_pool_id)
@@ -597,23 +551,25 @@ impl Ecosystem {
                 params.fov,
                 params.layer_sizes.clone(),
                 target_pool_id,
+                params,
             );
 
+            new_organism.birth_generation = self.generation;
             self.generation += 1;
 
             // Logarithmic random sampling for mutation scale
-            let min = 0.0002f32;
+            let min = 0.002f32;
             let max = 0.2f32;
             let log_min = min.ln();
             let log_max = max.ln();
             let log_mutation_scale = rand::rng().random_range(log_min..log_max);
             let mutation_scale = log_mutation_scale.exp();
 
-            // If pool is empty, seed from other pools
-            if pool_organisms.is_empty() && !self.organisms.is_empty() {
-                // Pick a random organism from any other pool as a seed
-                let seed_idx = rand::rng().random_range(0..self.organisms.len());
-                let seed = &self.organisms[seed_idx];
+            // If pool is empty in graveyard, seed from other pools in graveyard
+            if pool_organisms.is_empty() && !self.graveyard.is_empty() {
+                // Pick a random organism from any other pool in graveyard as a seed
+                let seed_idx = rand::rng().random_range(0..self.graveyard.len());
+                let seed = &self.graveyard[seed_idx];
 
                 // Clone and mutate the seed organism into the new pool
                 let mut cloned_brain = seed.brain.clone();
@@ -626,34 +582,72 @@ impl Ecosystem {
                 let reproduction_strategy = rand::rng().random_range(0..2);
 
                 if reproduction_strategy == 0 {
-                    // Crossover: pick two random organisms from top 15% of THIS POOL
-                    let top_count = (pool_organisms.len() as f32 * 0.15).max(2.0) as usize;
-                    let top_count = top_count.min(pool_organisms.len());
+                    // Crossover: pick two organisms from top 15% (possibly from different pools)
 
-                    // Pick two different parents from top 15% of pool
-                    let parent_1_pool_idx = rand::rng().random_range(0..top_count);
-                    let mut parent_2_pool_idx = rand::rng().random_range(0..top_count);
+                    // Decide if we allow inter-pool breeding for this organism
+                    let allow_interbreeding =
+                        rand::rng().random::<f32>() < params.pool_interbreed_prob;
 
-                    // Ensure parents are different
-                    while parent_2_pool_idx == parent_1_pool_idx && top_count > 1 {
-                        parent_2_pool_idx = rand::rng().random_range(0..top_count);
+                    let (candidates, is_same_pool) =
+                        if allow_interbreeding && self.graveyard.len() >= 2 {
+                            // Inter-pool breeding: select from ALL graveyard organisms
+                            let all_indices: Vec<usize> = (0..self.graveyard.len()).collect();
+                            (all_indices, false)
+                        } else {
+                            // Same-pool breeding: select from THIS pool only
+                            (pool_organisms.clone(), true)
+                        };
+
+                    if candidates.len() >= 2 {
+                        let top_count = (candidates.len() as f32 * 0.15).max(2.0) as usize;
+                        let top_count = top_count.min(candidates.len());
+
+                        // Pick two different parents from top 15%
+                        let parent_1_idx = rand::rng().random_range(0..top_count);
+                        let mut parent_2_idx = rand::rng().random_range(0..top_count);
+
+                        // Ensure parents are different
+                        while parent_2_idx == parent_1_idx && top_count > 1 {
+                            parent_2_idx = rand::rng().random_range(0..top_count);
+                        }
+
+                        let parent_1 = &self.graveyard[candidates[parent_1_idx]];
+                        let parent_2 = &self.graveyard[candidates[parent_2_idx]];
+
+                        // Track parent scores for later comparison
+                        let avg_parent_score = (parent_1.score + parent_2.score) as f64 / 2.0;
+                        new_organism.parent_avg_score = avg_parent_score;
+
+                        // Mark reproduction method
+                        if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
+                            new_organism.reproduction_method = 3; // inter-pool sexual
+                        } else {
+                            new_organism.reproduction_method = 2; // same-pool sexual
+                        }
+
+                        // Perform crossover
+                        let crossover_brain =
+                            brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
+                        new_organism.brain = crossover_brain;
+
+                        // Inherit DNA from parents with crossover and mutation
+                        let alpha = rand::rng().random::<f32>();
+                        new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
+                        dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
+
+                        // If parents from different pools, apply extra mutation for diversity
+                        if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
+                            new_organism.brain.mutate(mutation_scale * 0.5);
+                        }
                     }
-
-                    let parent_1 = &self.organisms[pool_organisms[parent_1_pool_idx]];
-                    let parent_2 = &self.organisms[pool_organisms[parent_2_pool_idx]];
-
-                    // Perform crossover
-                    let crossover_brain = brain::Brain::crossover(&parent_1.brain, &parent_2.brain);
-                    new_organism.brain = crossover_brain;
-
-                    // Inherit DNA from parents with crossover and mutation
-                    let alpha = rand::rng().random::<f32>();
-                    new_organism.dna = dna::crossover(&parent_1.dna, &parent_2.dna, alpha);
-                    dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
                 } else if pool_organisms.len() >= 10 {
-                    // Asexual: clone with mutation from THIS POOL
+                    // Asexual: clone with mutation from THIS POOL (from graveyard)
                     let parent_pool_idx = rand::rng().random_range(0..pool_organisms.len() / 10);
-                    let parent = &self.organisms[pool_organisms[parent_pool_idx]];
+                    let parent = &self.graveyard[pool_organisms[parent_pool_idx]];
+
+                    // Track parent score for later comparison
+                    new_organism.parent_avg_score = parent.score as f64;
+                    new_organism.reproduction_method = 1; // asexual
 
                     let mut cloned_brain = parent.brain.clone();
                     cloned_brain.mutate(mutation_scale);
@@ -668,8 +662,13 @@ impl Ecosystem {
                     }
                 }
             } else if pool_organisms.len() == 1 {
-                // Only one organism in pool - clone and mutate it
-                let parent = &self.organisms[pool_organisms[0]];
+                // Only one organism in pool - clone and mutate it (from graveyard)
+                let parent = &self.graveyard[pool_organisms[0]];
+
+                // Track parent score for later comparison
+                new_organism.parent_avg_score = parent.score as f64;
+                new_organism.reproduction_method = 1; // asexual
+
                 let mut cloned_brain = parent.brain.clone();
                 cloned_brain.mutate(mutation_scale);
                 new_organism.brain = cloned_brain;
@@ -735,22 +734,4 @@ fn build_trees(ecosystem: &Ecosystem) -> Result<(Tree2D, Tree2D, Tree2D), KdTree
     let kd_tree_food = build_tree(&ecosystem.food, |food| food.pos.to_vec())?;
     let kd_tree_projectiles = build_tree(&ecosystem.projectiles, |proj| proj.pos.to_vec())?;
     Ok((kd_tree_orgs, kd_tree_food, kd_tree_projectiles))
-}
-
-fn line_circle_distance(
-    line_start: &Array1<f32>,
-    line_end: &Array1<f32>,
-    circle_center: &Array1<f32>,
-) -> f32 {
-    let p = Point::new(circle_center[0], circle_center[1]);
-    let line = Line::new(
-        Point::new(line_start[0], line_start[1]),
-        Point::new(line_end[0], line_end[1]),
-    );
-    Euclidean.distance(&p, &line)
-}
-
-fn wrap_around_mut(v: &mut Array1<f32>, box_width: f32, box_height: f32) {
-    v[0] = v[0].rem_euclid(box_width);
-    v[1] = v[1].rem_euclid(box_height);
 }

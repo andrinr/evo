@@ -35,8 +35,19 @@ pub mod simulation {
     pub mod events;
     /// Food items that organisms can consume.
     pub mod food;
+    /// Geometric utility functions for distance calculations.
+    pub mod geometric_utils;
+    /// Trait for locatable entities that can be updated.
+    ///
+    /// The [`locatable::Locatable`] trait is implemented by all entities that have
+    /// a position in 2D space and can be updated over time (Food, Organism, Projectile).
+    pub mod locatable;
     /// Organism behavior, state, and lifecycle.
     pub mod organism;
+    /// Simulation parameters.
+    pub mod params;
     /// Attack projectiles fired by organisms.
     pub mod projectile;
+    /// Reproduction statistics tracking.
+    pub mod reproduction;
 }

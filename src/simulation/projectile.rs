@@ -5,6 +5,8 @@
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 
+use super::locatable::Locatable;
+
 /// A projectile fired by an organism during an attack.
 ///
 /// Projectiles travel in a straight line at constant velocity and expire after
@@ -80,5 +82,23 @@ impl Projectile {
     /// `true` if the projectile should be removed, `false` otherwise.
     pub fn is_expired(&self) -> bool {
         self.distance_traveled >= self.max_range
+    }
+}
+
+impl Locatable for Projectile {
+    fn pos(&self) -> &Array1<f32> {
+        &self.pos
+    }
+
+    fn pos_mut(&mut self) -> &mut Array1<f32> {
+        &mut self.pos
+    }
+
+    fn update(&mut self, dt: f32) {
+        let displacement = &self.velocity * dt;
+        let distance = displacement.mapv(|x| x.powi(2)).sum().sqrt();
+
+        self.pos += &displacement;
+        self.distance_traveled += distance;
     }
 }

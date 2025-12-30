@@ -7,6 +7,8 @@ use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 use serde::{Deserialize, Serialize};
 
+use super::locatable::Locatable;
+
 /// A food item that organisms can consume for energy.
 ///
 /// Food items have a position and energy value. When an organism consumes food,
@@ -52,5 +54,20 @@ impl Food {
     /// Marks this food as consumed by setting energy to 0.
     pub fn consume(&mut self) {
         self.energy = 0.0;
+    }
+}
+
+impl Locatable for Food {
+    fn pos(&self) -> &Array1<f32> {
+        &self.pos
+    }
+
+    fn pos_mut(&mut self) -> &mut Array1<f32> {
+        &mut self.pos
+    }
+
+    fn update(&mut self, dt: f32) {
+        // Food only updates its age
+        self.age += dt;
     }
 }

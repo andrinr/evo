@@ -3,7 +3,8 @@
 //! Uses an event queue to collect state changes from parallel organism updates,
 //! then applies them serially to avoid race conditions.
 
-use super::ecosystem::{Ecosystem, Params};
+use super::ecosystem::Ecosystem;
+use super::params::Params;
 use super::projectile;
 use ndarray::Array1;
 use std::collections::HashMap;
@@ -92,7 +93,8 @@ impl EventQueue {
 pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueue) {
     // Track which food items are contested
     let mut food_claims: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut dead_organisms: Vec<(usize, Array1<f32>)> = Vec::new();
+    let mut dead_organisms_natural: Vec<(usize, Array1<f32>)> = Vec::new(); // Natural deaths (no corpse)
+    let mut dead_organisms_combat: Vec<(usize, Array1<f32>)> = Vec::new(); // Combat deaths (spawn corpse)
     let mut projectiles_to_remove: Vec<usize> = Vec::new();
     let mut energy_transfers: Vec<(usize, usize, f32)> = Vec::new();
 
@@ -121,7 +123,8 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 state.projectiles.push(projectile);
             }
             SimulationEvent::OrganismDied { organism_id, pos } => {
-                dead_organisms.push((organism_id, pos));
+                // Natural death - no corpse spawned
+                dead_organisms_natural.push((organism_id, pos));
             }
             SimulationEvent::ProjectileHit {
                 projectile_idx,
@@ -131,17 +134,23 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
             } => {
                 // Apply damage to target
                 let mut target_killed = false;
+                let mut target_pos = None;
                 if let Some(org) = state.organisms.iter_mut().find(|o| o.id == target_id) {
                     org.consume_energy(damage);
                     if !org.is_alive() {
                         target_killed = true;
+                        target_pos = Some(org.pos.clone());
                     }
                 }
                 // Award point to attacker if target was killed
                 if target_killed
-                    && let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
+                    && let Some(_attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
                 {
-                    attacker.score += 1;
+                    // _attacker.score += 1;
+                }
+                // Create corpse if organism was killed by projectile
+                if let Some(pos) = target_pos {
+                    dead_organisms_combat.push((target_id, pos));
                 }
                 // Mark projectile for removal
                 projectiles_to_remove.push(projectile_idx);
@@ -180,8 +189,9 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
         }
     }
 
-    // Create corpses from dead organisms
-    for (_organism_id, pos) in dead_organisms {
+    // Create corpses only from combat deaths (organisms killed by projectiles)
+    // Natural deaths do not spawn corpses
+    for (_organism_id, pos) in dead_organisms_combat {
         let corpse = super::food::Food {
             pos,
             energy: params.corpse_energy_ratio,
