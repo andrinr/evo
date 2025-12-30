@@ -1,22 +1,25 @@
-# Evolutionary Multi Agent MLP Training
+# Evolutionary Neural Network Simulation
 
-![ui](image-1.png)
+> [!NOTE]
+> This project was developed with extensive use of agentic AI coding tools (Claude Code CLI).
 
-![screenshot](thumb_2.gif)
+![UI](image-2.png)
 
-This repository contains code for training multi-layer perceptron (MLP) agents using evolutionary strategies. Each agent has a three pixel input, has a small memory and outputs a rotation and a movement command. The agents are trained to avoid each other and to move towards food.
+## Description
 
-Since crossover operations for MLPs are not well defined, each time an agent dies, a new agent is clone from the top 10% of the population. The new agent is mutated by randomly changing the weights of the MLP.
+A high-performance evolutionary simulation where organisms with neural network brains compete for survival. Organisms perceive their environment through vision, proprioception, and scent, then use their brains (MLPs or Transformers) to decide actions like movement, rotation, attacking, and energy sharing.
 
-Suprisingly, this approach works well and after at the mark of the 1000th agent the agents are able to avoid each other and move towards food.
+**Key Features:**
+- **Parallel simulation** using Rayon for multi-threaded organism updates
+- **Multiple reproduction strategies:** Asexual cloning, sexual crossover, and inter-pool breeding
+- **Genetic pools** for speciation and diversity
+- **Rich sensory perception:** Vision raycasting, proprioception, and scent detection
+- **Event-driven architecture** for thread-safe state updates
+- **Spatial indexing** with KD-trees for efficient neighbor queries
 
-I have spent only a few hours on this project. Things that could be improved are:
-- Progressively increase environmental stress by adding hunting mechanics.
-- Improve performance. 
-- Test different NN architectures. 
-- Experiment with crossover operations.
+Evolution happens through selection pressure - successful organisms contribute their genes to future generations through fitness-based breeding from a graveyard of deceased organisms.
 
-The code is inspired by this video: https://www.youtube.com/watch?v=RjweUYtpNq4
+**Inspiration:** Based on concepts from [this video](https://www.youtube.com/watch?v=RjweUYtpNq4)
 
 ## Running the Code
 
