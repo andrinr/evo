@@ -208,6 +208,107 @@ pub fn execute_food_consumption(
     events
 }
 
+/// Finds the nearest organism within reproduction radius for sexual reproduction.
+///
+/// # Arguments
+///
+/// * `entity` - The organism looking to reproduce
+/// * `neighbors` - List of nearby organism indices
+/// * `organisms` - All organisms in the ecosystem
+/// * `params` - Simulation parameters
+///
+/// # Returns
+///
+/// Optional organism ID of the nearest potential mate.
+fn find_reproduction_partner(
+    entity: &Organism,
+    neighbors: &[(f32, usize)],
+    organisms: &[Organism],
+    params: &Params,
+) -> Option<usize> {
+    let mut nearest_dist = f32::MAX;
+    let mut nearest_id = None;
+
+    for (_, neighbor_id) in neighbors {
+        let other = &organisms[*neighbor_id];
+        // Only allow reproduction within same genetic pool
+        if other.id != entity.id && other.energy > 0.5 && other.pool_id == entity.pool_id {
+            let dist = (&entity.pos - &other.pos).mapv(f32::abs).sum();
+            if dist < params.reproduction_radius && dist < nearest_dist {
+                nearest_dist = dist;
+                nearest_id = Some(other.id);
+            }
+        }
+    }
+
+    nearest_id
+}
+
+/// Executes asexual reproduction action.
+///
+/// # Arguments
+///
+/// * `entity` - The organism reproducing
+/// * `energy_contribution` - Amount of energy to give to offspring (min 0.5)
+/// * `params` - Simulation parameters
+///
+/// # Returns
+///
+/// Vector containing `AsexualReproduction` event if reproduction occurred.
+pub fn execute_asexual_reproduction(
+    entity: &Organism,
+    energy_contribution: f32,
+    _params: &Params,
+) -> ActionResult {
+    // Must give at least 0.5 energy and have enough energy
+    if energy_contribution >= 0.5 && entity.energy >= energy_contribution + 0.5 {
+        vec![SimulationEvent::AsexualReproduction {
+            parent_id: entity.id,
+            parent_pos: entity.pos.clone(),
+            energy_contribution,
+        }]
+    } else {
+        vec![]
+    }
+}
+
+/// Executes sexual reproduction action.
+///
+/// # Arguments
+///
+/// * `entity` - The organism wanting to reproduce
+/// * `energy_contribution` - Amount of energy this organism wants to contribute
+/// * `neighbors` - List of nearby organism indices
+/// * `organisms` - All organisms in the ecosystem
+/// * `params` - Simulation parameters
+///
+/// # Returns
+///
+/// Vector containing `SexualReproductionIntent` event if organism wants to reproduce.
+pub fn execute_sexual_reproduction(
+    entity: &Organism,
+    energy_contribution: f32,
+    neighbors: &[(f32, usize)],
+    organisms: &[Organism],
+    params: &Params,
+) -> ActionResult {
+    // Must have at least minimum energy and want to contribute something
+    if energy_contribution > 0.0 && entity.energy >= energy_contribution + 0.5 {
+        if let Some(partner_id) = find_reproduction_partner(entity, neighbors, organisms, params) {
+            vec![SimulationEvent::SexualReproductionIntent {
+                organism_id: entity.id,
+                partner_id,
+                energy_contribution,
+                pos: entity.pos.clone(),
+            }]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    }
+}
+
 /// Executes all actions extracted from brain output.
 ///
 /// # Arguments
@@ -239,6 +340,8 @@ pub fn execute_all_actions(
     let velocity = brain_outputs[offset + 1];
     let attack_strength = brain_outputs[offset + 2];
     let share_amount = brain_outputs[offset + 3];
+    let asexual_reproduction_energy = brain_outputs[offset + 4];
+    let sexual_reproduction_energy = brain_outputs[offset + 5];
 
     let mut events = vec![];
 
@@ -259,6 +362,24 @@ pub fn execute_all_actions(
         food_items,
         params,
     ));
+
+    // Reproduction actions - organism chooses between asexual or sexual
+    // If both outputs are high, asexual takes priority
+    if asexual_reproduction_energy >= 0.5 {
+        events.extend(execute_asexual_reproduction(
+            entity,
+            asexual_reproduction_energy,
+            params,
+        ));
+    } else if sexual_reproduction_energy > 0.0 {
+        events.extend(execute_sexual_reproduction(
+            entity,
+            sexual_reproduction_energy,
+            neighbors_orgs,
+            organisms,
+            params,
+        ));
+    }
 
     events
 }

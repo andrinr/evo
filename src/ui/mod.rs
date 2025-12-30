@@ -1,5 +1,6 @@
 // UI module - handles all user interface rendering
 
+mod events;
 mod genesis;
 mod nn;
 mod organisms;

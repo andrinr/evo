@@ -10,9 +10,9 @@ fn create_test_params() -> Params {
     let memory_size: usize = 8;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 1,
+        3 * num_vision_directions + (signal_size + 1) + memory_size + 7,
         16,
-        signal_size + memory_size + 4,
+        signal_size + memory_size + 6,
     ];
 
     Params {
@@ -58,6 +58,8 @@ fn create_test_params() -> Params {
         transformer_head_dim: 16,
         transformer_ff_dim: 128,
         graveyard_size: 100,
+        reproduction_energy_multiplier: 1.2,
+        reproduction_radius: 15.0,
     }
 }
 
@@ -86,7 +88,7 @@ fn test_proprioception_sense_size() {
     let params = create_test_params();
     let proprio = Proprioception::new();
 
-    let expected_size = params.memory_size + 1; // memory + energy
+    let expected_size = params.memory_size + 7; // memory + energy + rotation(2) + position(4)
     assert_eq!(proprio.input_size(&params), expected_size);
     assert_eq!(proprio.name(), "Proprioception");
 }
@@ -101,7 +103,7 @@ fn test_perception_combines_senses() {
     // Total size should be sum of all senses
     let expected_size = (params.num_vision_directions * 3) // vision
         + (params.signal_size + 1) // scent
-        + (params.memory_size + 1); // proprioception
+        + (params.memory_size + 7); // proprioception
 
     assert_eq!(perception.total_input_size(&params), expected_size);
 
@@ -122,7 +124,7 @@ fn test_custom_perception() {
         Box::new(Proprioception::new()),
     ]);
 
-    let expected_size = (params.num_vision_directions * 3) + (params.memory_size + 1);
+    let expected_size = (params.num_vision_directions * 3) + (params.memory_size + 7);
     assert_eq!(perception.total_input_size(&params), expected_size);
 }
 
@@ -135,10 +137,10 @@ fn test_proprioception_reads_organism_state() {
     if let Some(organism) = ecosystem.organisms.first() {
         let outputs = proprio.sense(organism, &ecosystem, &params, None);
 
-        // Should have memory + energy
-        assert_eq!(outputs.len(), params.memory_size + 1);
+        // Should have memory + energy + rotation(2) + position(4)
+        assert_eq!(outputs.len(), params.memory_size + 7);
 
-        // Last value should be energy
+        // Energy should be at memory_size index
         let energy_idx = params.memory_size;
         assert_eq!(outputs[energy_idx], organism.energy);
     }

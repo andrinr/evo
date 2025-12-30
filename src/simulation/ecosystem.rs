@@ -15,6 +15,7 @@ use super::projectile;
 use super::spatial::SpatialIndex;
 pub use super::spatial::SpatialTrees;
 
+use super::event_log::EventLog;
 use super::geometric_utils::wrap_around_mut;
 use super::params::Params;
 use super::reproduction::ReproductionStats;
@@ -46,6 +47,14 @@ pub struct Ecosystem {
     #[serde(skip)]
     #[serde(default = "default_evolution_engine")]
     evolution_engine: EvolutionEngine,
+    /// Active energy sharing interactions (`giver_id`, `receiver_id`, timestamp) for visualization
+    #[serde(skip)]
+    pub energy_shares: Vec<(usize, usize, f32)>,
+    /// Active reproduction intents (`organism1_id`, `organism2_id`, timestamp) for visualization
+    #[serde(skip)]
+    pub reproduction_intents: Vec<(usize, usize, f32)>,
+    /// Event log for displaying recent events in UI
+    pub event_log: EventLog,
 }
 
 fn default_evolution_engine() -> EvolutionEngine {
@@ -92,6 +101,9 @@ impl Ecosystem {
             generation: params.n_organism as u32,
             reproduction_stats: ReproductionStats::default(),
             evolution_engine: EvolutionEngine::new(params.graveyard_size),
+            energy_shares: Vec::new(),
+            reproduction_intents: Vec::new(),
+            event_log: EventLog::default(),
         }
     }
 
@@ -274,8 +286,8 @@ impl Ecosystem {
     pub fn spawn(&mut self, params: &Params, dt: f32) {
         let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
 
-        // spawn new organisms if there are less than n_organism (respecting max_organism cap)
-        // Use probabilistic spawning: spawn rate is per second, multiply by dt
+        // Automatic asexual reproduction from graveyard
+        // This complements organism-initiated reproduction
         let current_count = self.organisms.len();
         let max_allowed = params.max_organism.saturating_sub(current_count);
 

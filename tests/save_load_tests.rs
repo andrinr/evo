@@ -12,9 +12,9 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 1,
+        3 * num_vision_directions + (signal_size + 1) + memory_size + 7,
         10,
-        signal_size + memory_size + 4,
+        signal_size + memory_size + 6,
     ];
 
     let vision_radius = 30.0;
@@ -62,6 +62,8 @@ fn create_test_params() -> Params {
         transformer_head_dim: 16,
         transformer_ff_dim: 128,
         graveyard_size: 400,
+        reproduction_energy_multiplier: 1.2,
+        reproduction_radius: 15.0,
     }
 }
 

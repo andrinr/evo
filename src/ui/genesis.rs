@@ -135,6 +135,14 @@ pub fn draw_genesis_screen(params: &mut Params) -> bool {
                         egui::Slider::new(&mut params.dna_mutation_rate, 0.001..=0.5)
                             .text("DNA Mutation Rate"),
                     );
+                    ui.add(
+                        egui::Slider::new(&mut params.reproduction_radius, 5.0..=50.0)
+                            .text("Reproduction Radius"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut params.reproduction_energy_multiplier, 0.5..=3.0)
+                            .text("Reproduction Energy Multiplier"),
+                    );
                 });
 
                 ui.collapsing("Population Parameters", |ui| {

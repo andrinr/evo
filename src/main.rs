@@ -20,15 +20,16 @@ fn create_simulation_params() -> Params {
     let memory_size: usize = 32;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 1, // input: vision(dist+pool+type) + scent + memory + energy = 65
+        3 * num_vision_directions + (signal_size + 1) + memory_size + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y) = 71
         128,                                                             // hidden layer 1
         64,                                                              // hidden layer 2
-        signal_size + memory_size + 4, // output: signal + memory + rotation + acceleration + attack + share = 40
+        signal_size + memory_size + 6, // output: signal + memory + rotation + acceleration + attack + share + asexual_repro + sexual_repro = 46
     ];
 
     let vision_radius = 50.0;
-    let scent_radius = 20.0;
+    let scent_radius = 40.0;
     let share_radius = 15.0;
+    let reproduction_radius = 15.0;
     let dna_breeding_distance = 0.2; // Max DNA distance for breeding (hard cutoff)
     let dna_mutation_rate = 0.1; // Standard deviation of DNA mutation
 
@@ -37,10 +38,11 @@ fn create_simulation_params() -> Params {
         vision_radius,
         scent_radius,
         share_radius,
+        reproduction_radius,
         dna_breeding_distance,
         dna_mutation_rate,
         idle_energy_rate: 0.1,
-        move_energy_rate: 0.0001,
+        move_energy_rate: 0.00002,
         move_multiplier: 60.0,
         rot_energy_rate: 0.000_000_3,
         num_vision_directions,
@@ -51,8 +53,8 @@ fn create_simulation_params() -> Params {
         max_organism: 200,
         n_food: 120,
         max_food: 150,
-        box_width: 1000.0,
-        box_height: 900.0,
+        box_width: 800.0,
+        box_height: 700.0,
         layer_sizes,
         attack_cost_rate: 0.3,
         attack_damage_rate: 4.0,
@@ -75,6 +77,7 @@ fn create_simulation_params() -> Params {
         transformer_head_dim: 8,
         transformer_ff_dim: 32,
         graveyard_size: 100,
+        reproduction_energy_multiplier: 1.2,
     }
 }
 
@@ -214,6 +217,13 @@ fn update_and_render(
         // Draw simulation
         graphics::draw_food(eco, params, ui_state.stats_panel_width);
         graphics::draw_projectiles(eco, params, ui_state.stats_panel_width);
+        graphics::draw_interactions(
+            eco,
+            params,
+            ui_state.stats_panel_width,
+            &eco.energy_shares,
+            &eco.reproduction_intents,
+        );
         graphics::draw_organisms(
             eco,
             params,
@@ -357,10 +367,10 @@ async fn main() {
                         3 * params_lock.num_vision_directions
                             + (params_lock.signal_size + 1)
                             + params_lock.memory_size
-                            + 1, // input: vision(dist+pool+type) + scent + memory + energy
+                            + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y)
                         128,                                                   // hidden layer 1
                         64,                                                    // hidden layer 2
-                        params_lock.signal_size + params_lock.memory_size + 4, // output: signal + memory + actions
+                        params_lock.signal_size + params_lock.memory_size + 6, // output: signal + memory + rotation + velocity + attack + share + asexual_repro + sexual_repro
                     ];
                 }
                 should_start

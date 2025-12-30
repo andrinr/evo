@@ -101,6 +101,53 @@ impl ToScreen for f32 {
     }
 }
 
+/// Draws lines between organisms that are interacting (energy sharing or reproduction).
+pub fn draw_interactions(
+    state: &simulation::ecosystem::Ecosystem,
+    params: &Params,
+    ui_panel_width: f32,
+    energy_shares: &[(usize, usize, f32)],
+    reproduction_intents: &[(usize, usize, f32)],
+) {
+    // Draw energy sharing lines (green)
+    for (giver_id, receiver_id, _timestamp) in energy_shares {
+        if let (Some(giver), Some(receiver)) = (
+            state.organisms.iter().find(|o| o.id == *giver_id),
+            state.organisms.iter().find(|o| o.id == *receiver_id),
+        ) {
+            let start = giver.pos.to_screen(params, ui_panel_width);
+            let end = receiver.pos.to_screen(params, ui_panel_width);
+            draw_line(
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                2.0,
+                Color::from_rgba(0, 255, 255, 150),
+            );
+        }
+    }
+
+    // Draw reproduction intent lines (pink/magenta)
+    for (org1_id, org2_id, _timestamp) in reproduction_intents {
+        if let (Some(org1), Some(org2)) = (
+            state.organisms.iter().find(|o| o.id == *org1_id),
+            state.organisms.iter().find(|o| o.id == *org2_id),
+        ) {
+            let start = org1.pos.to_screen(params, ui_panel_width);
+            let end = org2.pos.to_screen(params, ui_panel_width);
+            draw_line(
+                start[0],
+                start[1],
+                end[0],
+                end[1],
+                3.0,
+                Color::from_rgba(255, 100, 200, 200),
+            );
+        }
+    }
+}
+
 pub fn draw_food(state: &simulation::ecosystem::Ecosystem, params: &Params, ui_panel_width: f32) {
     // draw food
     state.food.iter().for_each(|entity| {

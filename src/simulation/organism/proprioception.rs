@@ -15,6 +15,8 @@ use super::sense::Sense;
 /// Outputs:
 /// - Memory state (all memory cells)
 /// - Energy level (normalized)
+/// - Rotation (sin and cos components for continuous encoding)
+/// - Position encoding (sin and cos of normalized x and y coordinates)
 pub struct Proprioception;
 
 impl Proprioception {
@@ -35,26 +37,50 @@ impl Sense for Proprioception {
         &self,
         organism: &Organism,
         _ecosystem: &Ecosystem,
-        _params: &Params,
+        params: &Params,
         _trees: Option<&super::super::ecosystem::SpatialTrees>,
     ) -> Array1<f32> {
         let memory_size = organism.memory.len();
-        let mut proprio_outputs = Array1::zeros(memory_size + 1);
+        // memory + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) = memory_size + 7
+        let mut proprio_outputs = Array1::zeros(memory_size + 7);
+
+        let mut idx = 0;
 
         // Copy memory state
-        for (i, &mem_val) in organism.memory.iter().enumerate() {
-            proprio_outputs[i] = mem_val;
+        for &mem_val in organism.memory.iter() {
+            proprio_outputs[idx] = mem_val;
+            idx += 1;
         }
 
         // Add energy level (already normalized)
-        proprio_outputs[memory_size] = organism.energy;
+        proprio_outputs[idx] = organism.energy;
+        idx += 1;
+
+        // Add rotation awareness (sin and cos for continuous encoding)
+        proprio_outputs[idx] = organism.rot.sin();
+        idx += 1;
+        proprio_outputs[idx] = organism.rot.cos();
+        idx += 1;
+
+        // Add positional encoding using sine and cosine
+        // Normalize position to [0, 2π] range for periodic encoding
+        let norm_x = (organism.pos[0] / params.box_width) * 2.0 * std::f32::consts::PI;
+        let norm_y = (organism.pos[1] / params.box_height) * 2.0 * std::f32::consts::PI;
+
+        proprio_outputs[idx] = norm_x.sin();
+        idx += 1;
+        proprio_outputs[idx] = norm_x.cos();
+        idx += 1;
+        proprio_outputs[idx] = norm_y.sin();
+        idx += 1;
+        proprio_outputs[idx] = norm_y.cos();
 
         proprio_outputs
     }
 
     fn input_size(&self, params: &Params) -> usize {
-        // memory_size + 1 for energy
-        params.memory_size + 1
+        // memory_size + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y)
+        params.memory_size + 7
     }
 
     fn name(&self) -> &'static str {

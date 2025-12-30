@@ -3,10 +3,14 @@
 //! Implements both multi-layer perceptron (MLP) and transformer architectures
 //! with support for genetic algorithm operations (mutation and crossover).
 
-use ndarray::{Array1, Array2};
-use ndarray_rand::RandomExt;
-use ndarray_rand::rand_distr::Uniform;
+use ndarray::Array1;
 use serde::{Deserialize, Serialize};
+
+pub mod mlp;
+pub mod transformer;
+
+pub use mlp::Mlp;
+pub use transformer::{AttentionHead, TransformerBlock};
 
 /// Type of neural network architecture to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,256 +19,6 @@ pub enum BrainType {
     MLP,
     /// Transformer with multi-head self-attention
     Transformer,
-}
-
-/// A single layer of a multi-layer perceptron.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Mlp {
-    /// Weight matrix (`output_size` × `input_size`).
-    pub weights: Array2<f32>,
-    /// Bias vector (`output_size`).
-    pub biases: Array1<f32>,
-}
-
-impl Mlp {
-    /// Creates a new layer with random weights and biases.
-    pub fn new_random(input_size: usize, output_size: usize, scale: f32) -> Self {
-        Self {
-            weights: Array2::random((output_size, input_size), Uniform::new(-scale, scale)),
-            biases: Array1::random(output_size, Uniform::new(-scale, scale)),
-        }
-    }
-
-    /// Performs forward pass with tanh activation.
-    #[inline]
-    pub fn forward(&self, inputs: &Array1<f32>) -> Array1<f32> {
-        // SIMD-optimized: dot product uses BLAS when enabled
-        let mut output = self.weights.dot(inputs);
-        output += &self.biases;
-
-        // In-place tanh for better cache locality
-        output.mapv_inplace(f32::tanh);
-        output
-    }
-
-    /// Mutates weights and biases by adding random noise.
-    pub fn mutate(&mut self, mutation_scale: f32) {
-        self.weights += &Array2::random(
-            self.weights.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.biases += &Array1::random(
-            self.biases.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-    }
-
-    /// Creates a new layer by averaging two parent layers.
-    pub fn crossover(parent1: &Mlp, parent2: &Mlp) -> Self {
-        Self {
-            weights: &parent1.weights * 0.5 + &parent2.weights * 0.5,
-            biases: &parent1.biases * 0.5 + &parent2.biases * 0.5,
-        }
-    }
-}
-
-/// A single attention head in a transformer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttentionHead {
-    /// Query projection weights (`head_dim` × `input_dim`)
-    pub w_q: Array2<f32>,
-    /// Key projection weights (`head_dim` × `input_dim`)
-    pub w_k: Array2<f32>,
-    /// Value projection weights (`head_dim` × `input_dim`)
-    pub w_v: Array2<f32>,
-}
-
-impl AttentionHead {
-    /// Creates a new attention head with random weights.
-    pub fn new_random(input_dim: usize, head_dim: usize, scale: f32) -> Self {
-        Self {
-            w_q: Array2::random((head_dim, input_dim), Uniform::new(-scale, scale)),
-            w_k: Array2::random((head_dim, input_dim), Uniform::new(-scale, scale)),
-            w_v: Array2::random((head_dim, input_dim), Uniform::new(-scale, scale)),
-        }
-    }
-
-    /// Performs attention on a single input vector.
-    #[inline]
-    pub fn forward(&self, input: &Array1<f32>) -> Array1<f32> {
-        // Q, K, V projections
-        let q = self.w_q.dot(input);
-        let k = self.w_k.dot(input);
-        let v = self.w_v.dot(input);
-
-        // Scaled dot-product attention (self-attention on single vector)
-        let scale = (q.len() as f32).sqrt();
-        let score = q.dot(&k) / scale;
-        let attention = score.tanh(); // Bounded activation
-
-        // Apply attention to value
-        &v * attention
-    }
-
-    /// Mutates all weights by adding random noise.
-    pub fn mutate(&mut self, mutation_scale: f32) {
-        self.w_q += &Array2::random(
-            self.w_q.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.w_k += &Array2::random(
-            self.w_k.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.w_v += &Array2::random(
-            self.w_v.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-    }
-
-    /// Creates a new head by averaging two parent heads.
-    pub fn crossover(parent1: &AttentionHead, parent2: &AttentionHead) -> Self {
-        Self {
-            w_q: &parent1.w_q * 0.5 + &parent2.w_q * 0.5,
-            w_k: &parent1.w_k * 0.5 + &parent2.w_k * 0.5,
-            w_v: &parent1.w_v * 0.5 + &parent2.w_v * 0.5,
-        }
-    }
-}
-
-/// A transformer block with multi-head attention and feed-forward network.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransformerBlock {
-    /// Attention heads
-    pub heads: Vec<AttentionHead>,
-    /// Output projection after concatenating heads (`input_dim` × `total_head_outputs`)
-    pub w_o: Array2<f32>,
-    /// Feed-forward network layer 1 (`ff_dim` × `input_dim`)
-    pub ff1: Mlp,
-    /// Feed-forward network layer 2 (`input_dim` × `ff_dim`)
-    pub ff2: Mlp,
-    /// Layer norm gain for attention (pre-normalization)
-    pub ln1_gain: Array1<f32>,
-    /// Layer norm bias for attention (pre-normalization)
-    pub ln1_bias: Array1<f32>,
-    /// Layer norm gain for feed-forward (pre-normalization)
-    pub ln2_gain: Array1<f32>,
-    /// Layer norm bias for feed-forward (pre-normalization)
-    pub ln2_bias: Array1<f32>,
-}
-
-impl TransformerBlock {
-    /// Creates a new transformer block.
-    pub fn new_random(
-        input_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        ff_dim: usize,
-        scale: f32,
-    ) -> Self {
-        let heads: Vec<AttentionHead> = (0..num_heads)
-            .map(|_| AttentionHead::new_random(input_dim, head_dim, scale))
-            .collect();
-
-        Self {
-            heads,
-            w_o: Array2::random(
-                (input_dim, num_heads * head_dim),
-                Uniform::new(-scale, scale),
-            ),
-            ff1: Mlp::new_random(input_dim, ff_dim, scale),
-            ff2: Mlp::new_random(ff_dim, input_dim, scale),
-            ln1_gain: Array1::ones(input_dim),
-            ln1_bias: Array1::zeros(input_dim),
-            ln2_gain: Array1::ones(input_dim),
-            ln2_bias: Array1::zeros(input_dim),
-        }
-    }
-
-    /// Simple layer normalization.
-    #[inline]
-    fn layer_norm(x: &Array1<f32>, gain: &Array1<f32>, bias: &Array1<f32>) -> Array1<f32> {
-        let mean = x.mean().unwrap_or(0.0);
-        let variance = x.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / x.len() as f32;
-        let std = (variance + 1e-5).sqrt();
-
-        ((x - mean) / std) * gain + bias
-    }
-
-    /// Forward pass through transformer block.
-    #[inline]
-    pub fn forward(&self, input: &Array1<f32>) -> Array1<f32> {
-        // Multi-head attention with residual
-        let normed1 = Self::layer_norm(input, &self.ln1_gain, &self.ln1_bias);
-
-        // Concatenate all head outputs
-        let mut head_outputs = Vec::new();
-        for head in &self.heads {
-            head_outputs.extend(head.forward(&normed1).iter());
-        }
-        let head_concat = Array1::from_vec(head_outputs);
-
-        // Project concatenated heads back to input dimension
-        let attention_out = self.w_o.dot(&head_concat);
-        let after_attention = input + &attention_out; // Residual connection
-
-        // Feed-forward network with residual
-        let normed2 = Self::layer_norm(&after_attention, &self.ln2_gain, &self.ln2_bias);
-        let ff_out1 = self.ff1.forward(&normed2);
-        let ff_out2 = self.ff2.forward(&ff_out1);
-
-        &after_attention + &ff_out2 // Residual connection
-    }
-
-    /// Mutates all parameters in the block.
-    pub fn mutate(&mut self, mutation_scale: f32) {
-        for head in &mut self.heads {
-            head.mutate(mutation_scale);
-        }
-        self.w_o += &Array2::random(
-            self.w_o.dim(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.ff1.mutate(mutation_scale);
-        self.ff2.mutate(mutation_scale);
-        self.ln1_gain += &Array1::random(
-            self.ln1_gain.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.ln1_bias += &Array1::random(
-            self.ln1_bias.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.ln2_gain += &Array1::random(
-            self.ln2_gain.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-        self.ln2_bias += &Array1::random(
-            self.ln2_bias.len(),
-            Uniform::new(-mutation_scale, mutation_scale),
-        );
-    }
-
-    /// Creates a new block by averaging two parent blocks.
-    pub fn crossover(parent1: &TransformerBlock, parent2: &TransformerBlock) -> Self {
-        let new_heads = parent1
-            .heads
-            .iter()
-            .zip(&parent2.heads)
-            .map(|(h1, h2)| AttentionHead::crossover(h1, h2))
-            .collect();
-
-        Self {
-            heads: new_heads,
-            w_o: &parent1.w_o * 0.5 + &parent2.w_o * 0.5,
-            ff1: Mlp::crossover(&parent1.ff1, &parent2.ff1),
-            ff2: Mlp::crossover(&parent1.ff2, &parent2.ff2),
-            ln1_gain: &parent1.ln1_gain * 0.5 + &parent2.ln1_gain * 0.5,
-            ln1_bias: &parent1.ln1_bias * 0.5 + &parent2.ln1_bias * 0.5,
-            ln2_gain: &parent1.ln2_gain * 0.5 + &parent2.ln2_gain * 0.5,
-            ln2_bias: &parent1.ln2_bias * 0.5 + &parent2.ln2_bias * 0.5,
-        }
-    }
 }
 
 /// Neural network brain that can use either MLP or Transformer architecture.
@@ -394,6 +148,51 @@ impl Brain {
                     input_embed: Mlp::crossover(ie1, ie2),
                     blocks: new_blocks,
                     output_proj: Mlp::crossover(op1, op2),
+                }
+            }
+            _ => {
+                // Mismatched types - return clone of parent1
+                parent1.clone()
+            }
+        }
+    }
+
+    /// Creates a new brain by weighted averaging two parent brains.
+    /// Both parents must be the same architecture type.
+    /// weight1 is the weight for parent1, weight2 = 1.0 - weight1 for parent2.
+    pub fn crossover_weighted(parent1: &Brain, parent2: &Brain, weight1: f32) -> Self {
+        match (parent1, parent2) {
+            (Brain::MLP { layers: l1 }, Brain::MLP { layers: l2 }) => {
+                let new_layers = l1
+                    .iter()
+                    .zip(l2)
+                    .map(|(layer1, layer2)| Mlp::crossover_weighted(layer1, layer2, weight1))
+                    .collect();
+                Brain::MLP { layers: new_layers }
+            }
+            (
+                Brain::Transformer {
+                    input_embed: ie1,
+                    blocks: b1,
+                    output_proj: op1,
+                },
+                Brain::Transformer {
+                    input_embed: ie2,
+                    blocks: b2,
+                    output_proj: op2,
+                },
+            ) => {
+                let new_blocks = b1
+                    .iter()
+                    .zip(b2)
+                    .map(|(block1, block2)| {
+                        TransformerBlock::crossover_weighted(block1, block2, weight1)
+                    })
+                    .collect();
+                Brain::Transformer {
+                    input_embed: Mlp::crossover_weighted(ie1, ie2, weight1),
+                    blocks: new_blocks,
+                    output_proj: Mlp::crossover_weighted(op1, op2, weight1),
                 }
             }
             _ => {

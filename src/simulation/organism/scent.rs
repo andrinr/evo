@@ -12,8 +12,12 @@ use super::sense::Sense;
 /// Scent sense that detects chemical signals and DNA similarity.
 ///
 /// Outputs:
-/// - Signal channels from the nearest organism (RGB color)
+/// - Signal channels from nearby organisms (RGB color), weighted by distance (closer = stronger)
 /// - DNA distance to the nearest organism
+///
+/// The scent strength falls off linearly with distance:
+/// - 1.0 at distance 0
+/// - 0.0 at `scent_radius`
 pub struct Scent;
 
 impl Scent {
@@ -106,27 +110,31 @@ impl Sense for Scent {
 
         // Scent: signal (RGB) + DNA distance to nearest organism
         let mut scent_signal = Array1::zeros(params.signal_size);
-        let mut scent_count = 0;
         let mut closest_dna_distance = 0.0f32;
         let mut min_org_distance = f32::MAX;
 
-        // Add organism signals and find closest organism for DNA distance
+        // Add organism signals weighted by distance (closer = stronger)
         for (_, org_id) in &scent_orgs {
             let neighbor_org = &ecosystem.organisms[*org_id];
             if neighbor_org.id == organism.id {
                 continue; // Skip self
             }
-            // Add all signal components (RGB)
-            for i in 0..params.signal_size {
-                scent_signal[i] += neighbor_org.signal[i];
-            }
-            scent_count += 1;
 
-            // Track closest organism for DNA distance
+            // Calculate distance
             let dist = (&organism.pos - &neighbor_org.pos)
                 .mapv(|x| x * x)
                 .sum()
                 .sqrt();
+
+            // Distance falloff: 1.0 at distance 0, 0.0 at scent_radius
+            let distance_factor = (1.0 - (dist / params.scent_radius)).max(0.0);
+
+            // Add signal components multiplied by distance factor
+            for i in 0..params.signal_size {
+                scent_signal[i] += neighbor_org.signal[i] * distance_factor;
+            }
+
+            // Track closest organism for DNA distance
             if dist < min_org_distance {
                 min_org_distance = dist;
                 // Calculate DNA distance with periodic boundary conditions
@@ -134,14 +142,21 @@ impl Sense for Scent {
             }
         }
 
-        // Add food signals (no DNA for food)
-        for (_, _food_id) in &scent_foods {
-            scent_count += 1;
-            scent_signal[2] += 1.0; // B-channel
-        }
+        // Add food signals weighted by distance
+        for (_, food_id) in &scent_foods {
+            let food_item = &ecosystem.food[*food_id];
 
-        if scent_count > 0 {
-            scent_signal /= scent_count as f32; // Average
+            // Calculate distance
+            let dist = (&organism.pos - &food_item.pos)
+                .mapv(|x| x * x)
+                .sum()
+                .sqrt();
+
+            // Distance falloff: 1.0 at distance 0, 0.0 at scent_radius
+            let distance_factor = (1.0 - (dist / params.scent_radius)).max(0.0);
+
+            // Food adds to B-channel (blue) weighted by distance
+            scent_signal[2] += 1.0 * distance_factor;
         }
 
         // Copy signal to outputs

@@ -33,6 +33,8 @@ pub mod simulation {
     pub mod dna;
     /// Main ecosystem simulation with parallel updates.
     pub mod ecosystem;
+    /// Event logging system for displaying recent events.
+    pub mod event_log;
     /// Event system for thread-safe state updates.
     pub mod events;
     /// Evolution and organism spawning system.

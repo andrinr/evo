@@ -13,6 +13,8 @@ pub struct Params {
     pub scent_radius: f32,
     /// Maximum distance for energy sharing between organisms.
     pub share_radius: f32,
+    /// Maximum distance for sexual reproduction between organisms.
+    pub reproduction_radius: f32,
     /// Maximum DNA distance for breeding (hard cutoff).
     /// Only organisms with DNA distance less than this value can interbreed.
     /// Typical range: 0.1-0.3 (max periodic distance is ~0.707).
@@ -95,4 +97,7 @@ pub struct Params {
     /// Maximum number of deceased organisms to keep in graveyard for breeding selection.
     /// Breeding will select fittest organisms from this graveyard instead of living organisms.
     pub graveyard_size: usize,
+    /// Energy multiplier for offspring (offspring gets `parent_energy` * this factor).
+    /// Default: 1.2 (20% bonus). Range: 0.5-3.0.
+    pub reproduction_energy_multiplier: f32,
 }

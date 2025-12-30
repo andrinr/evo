@@ -142,6 +142,9 @@ pub fn draw_ui(
         // Right-side stats panel
         super::stats::draw_stats_panel(egui_ctx, state, ecosystem, params);
 
+        // Events panel - show recent events
+        super::events::draw_events_panel(egui_ctx, ecosystem);
+
         // Detail panel - show selected organism, or hovered if nothing selected
         let display_id = state.selected_organism_id.or(state.hovered_organism_id);
         if let Some(org_id) = display_id {
