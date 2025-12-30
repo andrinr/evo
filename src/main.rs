@@ -39,8 +39,8 @@ fn create_simulation_params() -> Params {
         share_radius,
         dna_breeding_distance,
         dna_mutation_rate,
-        idle_energy_rate: 0.2,
-        move_energy_rate: 0.0002,
+        idle_energy_rate: 0.1,
+        move_energy_rate: 0.0001,
         move_multiplier: 60.0,
         rot_energy_rate: 0.000_000_3,
         num_vision_directions,
@@ -63,8 +63,8 @@ fn create_simulation_params() -> Params {
         projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
         projectile_radius: 2.0,
-        organism_spawn_rate: 15.0,
-        food_spawn_rate: 2.0,
+        organism_spawn_rate: 5.0,
+        food_spawn_rate: 5.0,
         food_lifetime: 20.0, // 0 = unlimited
         num_genetic_pools: 3,
         pool_interbreed_prob: 0.001, // 5% chance of inter-pool breeding

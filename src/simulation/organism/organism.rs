@@ -166,7 +166,7 @@ impl Organism {
 
         // Combined fitness: weight age and score equally
         // You can adjust these weights to prioritize survival vs combat
-        age_fitness + score_fitness
+        0.3 * age_fitness + score_fitness
     }
 
     /// Calculates vision ray directions based on evolved vision parameters.

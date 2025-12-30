@@ -22,7 +22,7 @@ use ndarray::{Array1, s};
 use rand::Rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::Arc;
 
 /// The main ecosystem containing all simulation state.
 ///
@@ -100,11 +100,6 @@ impl Ecosystem {
         // Build spatial index for efficient neighbor queries
         let spatial_index = SpatialIndex::build(self).expect("Failed to build spatial index");
 
-        // Clone the organisms vector for parallel access
-        let new_organisms = self.organisms.clone();
-
-        let event_queue = Mutex::new(events::EventQueue::new());
-
         self.time += dt;
 
         // Create perception system for generating brain inputs
@@ -113,72 +108,85 @@ impl Ecosystem {
         // Get reference to KD-trees for perception system
         let spatial_trees = spatial_index.as_trees();
 
-        // Create a snapshot Ecosystem for read-only access in the parallel loop
-        let ecosystem_snapshot = self.clone();
+        // Create Arc wrapper for shared read-only access
+        // This does ONE clone before parallelization (unavoidable for now due to perception API)
+        let ecosystem_snapshot = Arc::new(self.clone());
 
-        // parallel phase, only apply updates to entity itself
-        // for events involing other objects, use the event queue for thread safety
-        self.organisms.par_iter_mut().for_each(|entity| {
-            // wrap around the screen
-            wrap_around_mut(&mut entity.pos, params.box_width, params.box_height);
+        // Parallel phase: collect events from each organism without mutex contention
+        // Use larger chunks to reduce cache line bouncing and task switching overhead
+        let chunk_size = (self.organisms.len() / rayon::current_num_threads()).max(16);
+        let all_events: Vec<events::SimulationEvent> = self
+            .organisms
+            .par_chunks_mut(chunk_size)
+            .flat_map(|chunk| {
+                let mut chunk_events = Vec::new();
+                for entity in chunk.iter_mut() {
+                    // wrap around the screen
+                    wrap_around_mut(&mut entity.pos, params.box_width, params.box_height);
 
-            // Get nearest neighbors for collision and action detection
-            let neighbors_orgs = spatial_index.query_organisms(&entity.pos, params.vision_radius);
-            let neighbor_foods = spatial_index.query_food(&entity.pos, params.vision_radius);
+                    // Get nearest neighbors for collision and action detection
+                    let neighbors_orgs =
+                        spatial_index.query_organisms(&entity.pos, params.vision_radius);
+                    let neighbor_foods =
+                        spatial_index.query_food(&entity.pos, params.vision_radius);
 
-            // Check for collisions with other organisms
-            for (_, neighbor_id) in &neighbors_orgs {
-                let neighbor_org = &new_organisms[*neighbor_id];
-                if neighbor_org.id == entity.id {
-                    continue; // skip self
+                    // Check for collisions with other organisms
+                    for (_, neighbor_id) in &neighbors_orgs {
+                        let neighbor_org = &ecosystem_snapshot.organisms[*neighbor_id];
+                        if neighbor_org.id == entity.id {
+                            continue; // skip self
+                        }
+                        let org_org_distance =
+                            (&entity.pos - &neighbor_org.pos).mapv(f32::abs).sum();
+                        if org_org_distance < params.body_radius * 2.0 {
+                            entity.kill(); // collision with another organism
+                        }
+                    }
+
+                    // Generate brain inputs using perception system
+                    // Arc dereference is cheap - just a pointer read
+                    let brain_inputs = perception.perceive(
+                        entity,
+                        &ecosystem_snapshot,
+                        params,
+                        Some(&spatial_trees),
+                    );
+
+                    // Store brain inputs for visualization
+                    entity.last_brain_inputs.clone_from(&brain_inputs);
+
+                    // Process brain outputs
+                    let brain_outputs = entity.brain.think(&brain_inputs);
+
+                    // Update signal and memory from brain outputs
+                    entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
+                    entity.memory = brain_outputs
+                        .slice(s![
+                            params.signal_size..params.signal_size + params.memory_size
+                        ])
+                        .to_owned();
+
+                    // update age, cooldown, and idle energy consumption
+                    entity.age_by(dt);
+                    entity.update_cooldown(dt);
+                    entity.consume_energy(params.idle_energy_rate * dt);
+
+                    // Execute all organism actions and collect events
+                    let entity_events = actions::execute_all_actions(
+                        entity,
+                        &brain_outputs,
+                        &neighbors_orgs,
+                        &neighbor_foods,
+                        &ecosystem_snapshot.organisms,
+                        &ecosystem_snapshot.food,
+                        params,
+                        dt,
+                    );
+                    chunk_events.extend(entity_events);
                 }
-                let org_org_distance = (&entity.pos - &neighbor_org.pos).mapv(f32::abs).sum();
-                if org_org_distance < params.body_radius * 2.0 {
-                    entity.kill(); // collision with another organism
-                }
-            }
-
-            // Generate brain inputs using perception system
-            let brain_inputs =
-                perception.perceive(entity, &ecosystem_snapshot, params, Some(&spatial_trees));
-
-            // Store brain inputs for visualization
-            entity.last_brain_inputs.clone_from(&brain_inputs);
-
-            // Process brain outputs
-            let brain_outputs = entity.brain.think(&brain_inputs);
-
-            // Update signal and memory from brain outputs
-            entity.signal = brain_outputs.slice(s![..params.signal_size]).to_owned();
-            entity.memory = brain_outputs
-                .slice(s![
-                    params.signal_size..params.signal_size + params.memory_size
-                ])
-                .to_owned();
-
-            // update age, cooldown, and idle energy consumption
-            entity.age_by(dt);
-            entity.update_cooldown(dt);
-            entity.consume_energy(params.idle_energy_rate * dt);
-
-            // Execute all organism actions
-            let action_events = actions::execute_all_actions(
-                entity,
-                &brain_outputs,
-                &neighbors_orgs,
-                &neighbor_foods,
-                &new_organisms,
-                &ecosystem_snapshot.food,
-                params,
-                dt,
-            );
-
-            // Add action events to the queue
-            let mut queue = event_queue.lock().unwrap();
-            for event in action_events {
-                queue.push(event);
-            }
-        });
+                chunk_events
+            })
+            .collect();
 
         // Update projectiles and check for collisions using KD tree
         let mut projectile_events = Vec::new();
@@ -227,15 +235,16 @@ impl Ecosystem {
             }
         }
 
-        // Add projectile events to queue
-        {
-            let mut queue = event_queue.lock().unwrap();
-            for event in projectile_events {
-                queue.push(event);
-            }
+        // Combine all events and apply them
+        let mut combined_events = events::EventQueue::new();
+        for event in all_events {
+            combined_events.push(event);
+        }
+        for event in projectile_events {
+            combined_events.push(event);
         }
 
-        events::apply_events(self, params, event_queue.into_inner().unwrap());
+        events::apply_events(self, params, combined_events);
 
         // Record deaths and add to graveyard before removing organisms
         for organism in &self.organisms {

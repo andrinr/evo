@@ -12,7 +12,7 @@ use super::sense::Sense;
 /// Vision sense that detects organisms and food using raycasting.
 ///
 /// For each vision direction, the sense outputs:
-/// - Distance to nearest entity (normalized)
+/// - Proximity to nearest entity (inverted distance: 1.0 = very close, 0.0 = far)
 /// - Whether the entity is in the same genetic pool (1.0) or not (0.0)
 /// - Whether the entity is an organism (1.0) or food (0.0)
 pub struct Vision;
@@ -158,7 +158,10 @@ impl Sense for Vision {
                 if distance < params.body_radius && distance < min_distance {
                     min_distance = distance;
                     let base_idx = 3 * i;
-                    vision_outputs[base_idx] = distance;
+                    // Invert distance: closer = higher value
+                    // Use vision_radius as max distance for normalization
+                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    vision_outputs[base_idx] = proximity;
                     // Pool match: 1.0 if same pool, 0.0 if different pool
                     vision_outputs[base_idx + 1] = if neighbor_org.pool_id == organism.pool_id {
                         1.0
@@ -177,7 +180,9 @@ impl Sense for Vision {
                 if distance < params.body_radius && distance < min_distance {
                     min_distance = distance;
                     let base_idx = 3 * i;
-                    vision_outputs[base_idx] = distance;
+                    // Invert distance: closer = higher value
+                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    vision_outputs[base_idx] = proximity;
                     vision_outputs[base_idx + 1] = 0.0; // no pool match for food
                     vision_outputs[base_idx + 2] = 0.0; // is_organism = 0 for food
                 }
@@ -197,7 +202,9 @@ impl Sense for Vision {
                 if distance < params.projectile_radius && distance < min_distance {
                     min_distance = distance;
                     let base_idx = 3 * i;
-                    vision_outputs[base_idx] = distance;
+                    // Invert distance: closer = higher value
+                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    vision_outputs[base_idx] = proximity;
                     vision_outputs[base_idx + 1] = 0.0; // no pool match for projectiles
                     vision_outputs[base_idx + 2] = -1.0; // special marker for projectiles
                 }
@@ -208,7 +215,7 @@ impl Sense for Vision {
     }
 
     fn input_size(&self, params: &Params) -> usize {
-        // 3 outputs per direction: distance, pool_match, is_organism
+        // 3 outputs per direction: proximity (inverted distance), pool_match, is_organism
         params.num_vision_directions * 3
     }
 
