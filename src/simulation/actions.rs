@@ -340,8 +340,8 @@ pub fn execute_all_actions(
     let velocity = brain_outputs[offset + 1];
     let attack_strength = brain_outputs[offset + 2];
     let share_amount = brain_outputs[offset + 3];
-    let asexual_reproduction_energy = brain_outputs[offset + 4];
-    let sexual_reproduction_energy = brain_outputs[offset + 5];
+    let _asexual_reproduction_energy = brain_outputs[offset + 4]; // Unused - reproduction disabled
+    let _sexual_reproduction_energy = brain_outputs[offset + 5]; // Unused - reproduction disabled
 
     let mut events = vec![];
 
@@ -363,23 +363,24 @@ pub fn execute_all_actions(
         params,
     ));
 
-    // Reproduction actions - organism chooses between asexual or sexual
+    // Reproduction actions - DISABLED (organism-initiated reproduction is turned off)
+    // All reproduction now happens automatically via ecosystem.spawn()
     // If both outputs are high, asexual takes priority
-    if asexual_reproduction_energy >= 0.5 {
-        events.extend(execute_asexual_reproduction(
-            entity,
-            asexual_reproduction_energy,
-            params,
-        ));
-    } else if sexual_reproduction_energy > 0.0 {
-        events.extend(execute_sexual_reproduction(
-            entity,
-            sexual_reproduction_energy,
-            neighbors_orgs,
-            organisms,
-            params,
-        ));
-    }
+    // if asexual_reproduction_energy >= 0.5 {
+    //     events.extend(execute_asexual_reproduction(
+    //         entity,
+    //         asexual_reproduction_energy,
+    //         params,
+    //     ));
+    // } else if sexual_reproduction_energy > 0.0 {
+    //     events.extend(execute_sexual_reproduction(
+    //         entity,
+    //         sexual_reproduction_energy,
+    //         neighbors_orgs,
+    //         organisms,
+    //         params,
+    //     ));
+    // }
 
     events
 }

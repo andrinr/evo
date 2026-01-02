@@ -20,10 +20,31 @@ use super::geometric_utils::wrap_around_mut;
 use super::params::Params;
 use super::reproduction::ReproductionStats;
 use ndarray::{Array1, s};
+use ndarray_rand::RandomExt;
 use rand::Rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Performance timing statistics for profiling the simulation.
+#[derive(Debug, Clone, Default)]
+pub struct TimingStats {
+    /// Time to build spatial index (KD-trees)
+    pub spatial_index_ms: f32,
+    /// Time to clone ecosystem for parallel access
+    pub ecosystem_clone_ms: f32,
+    /// Time for parallel organism updates (sensing, thinking, actions)
+    pub parallel_update_ms: f32,
+    /// Time for projectile updates and collision detection
+    pub projectile_update_ms: f32,
+    /// Time to apply all events
+    pub event_application_ms: f32,
+    /// Time for cleanup (removing dead organisms, expired food)
+    pub cleanup_ms: f32,
+    /// Total step time
+    pub total_ms: f32,
+}
 
 /// The main ecosystem containing all simulation state.
 ///
@@ -55,6 +76,9 @@ pub struct Ecosystem {
     pub reproduction_intents: Vec<(usize, usize, f32)>,
     /// Event log for displaying recent events in UI
     pub event_log: EventLog,
+    /// Performance timing statistics
+    #[serde(skip)]
+    pub timing_stats: TimingStats,
 }
 
 fn default_evolution_engine() -> EvolutionEngine {
@@ -104,13 +128,18 @@ impl Ecosystem {
             energy_shares: Vec::new(),
             reproduction_intents: Vec::new(),
             event_log: EventLog::default(),
+            timing_stats: TimingStats::default(),
         }
     }
 
     /// Advances the simulation by one timestep with parallel organism updates.
     pub fn step(&mut self, params: &Params, dt: f32) {
+        let step_start = Instant::now();
+
         // Build spatial index for efficient neighbor queries
+        let spatial_start = Instant::now();
         let spatial_index = SpatialIndex::build(self).expect("Failed to build spatial index");
+        self.timing_stats.spatial_index_ms = spatial_start.elapsed().as_secs_f32() * 1000.0;
 
         self.time += dt;
 
@@ -122,10 +151,13 @@ impl Ecosystem {
 
         // Create Arc wrapper for shared read-only access
         // This does ONE clone before parallelization (unavoidable for now due to perception API)
+        let clone_start = Instant::now();
         let ecosystem_snapshot = Arc::new(self.clone());
+        self.timing_stats.ecosystem_clone_ms = clone_start.elapsed().as_secs_f32() * 1000.0;
 
         // Parallel phase: collect events from each organism without mutex contention
         // Use larger chunks to reduce cache line bouncing and task switching overhead
+        let parallel_start = Instant::now();
         let chunk_size = (self.organisms.len() / rayon::current_num_threads()).max(16);
         let all_events: Vec<events::SimulationEvent> = self
             .organisms
@@ -199,8 +231,10 @@ impl Ecosystem {
                 chunk_events
             })
             .collect();
+        self.timing_stats.parallel_update_ms = parallel_start.elapsed().as_secs_f32() * 1000.0;
 
         // Update projectiles and check for collisions using KD tree
+        let projectile_start = Instant::now();
         let mut projectile_events = Vec::new();
         for (proj_idx, projectile) in self.projectiles.iter_mut().enumerate() {
             projectile.update(dt);
@@ -246,8 +280,10 @@ impl Ecosystem {
                 });
             }
         }
+        self.timing_stats.projectile_update_ms = projectile_start.elapsed().as_secs_f32() * 1000.0;
 
         // Combine all events and apply them
+        let event_start = Instant::now();
         let mut combined_events = events::EventQueue::new();
         for event in all_events {
             combined_events.push(event);
@@ -257,8 +293,10 @@ impl Ecosystem {
         }
 
         events::apply_events(self, params, combined_events);
+        self.timing_stats.event_application_ms = event_start.elapsed().as_secs_f32() * 1000.0;
 
         // Record deaths and add to graveyard before removing organisms
+        let cleanup_start = Instant::now();
         for organism in &self.organisms {
             if !organism.is_alive() {
                 self.evolution_engine
@@ -276,6 +314,9 @@ impl Ecosystem {
         }
 
         self.food.retain(|f| f.age < params.food_lifetime);
+        self.timing_stats.cleanup_ms = cleanup_start.elapsed().as_secs_f32() * 1000.0;
+
+        self.timing_stats.total_ms = step_start.elapsed().as_secs_f32() * 1000.0;
     }
 
     /// Spawns new organisms through evolution when population is below target.
@@ -305,20 +346,35 @@ impl Ecosystem {
         let total_organisms_to_spawn = total_organisms_to_spawn.min(max_allowed);
 
         for _ in 0..total_organisms_to_spawn {
-            // Select a random genetic pool for this organism
-            let target_pool_id = rand::rng().random_range(0..params.num_genetic_pools);
+            // Select target pool based on sampling strategy
+            let target_pool_id = if params.unbalanced_pool_sampling {
+                // Sample from largest pool
+                self.select_pool_weighted_by_size(params)
+            } else {
+                // Uniform random sampling
+                rand::rng().random_range(0..params.num_genetic_pools)
+            };
 
-            // Use evolution engine to spawn organism
-            let new_organism = self.evolution_engine.spawn_organism(
-                self.generation,
-                target_pool_id,
-                &center,
-                params,
-            );
+            // Spawn organism from graveyard or living organisms
+            let new_organism = if params.spawn_from_graveyard {
+                // Evolution-based: spawn from graveyard
+                self.evolution_engine.spawn_organism(
+                    self.generation,
+                    target_pool_id,
+                    &center,
+                    params,
+                )
+            } else {
+                // Reproduction-based: clone from living organisms
+                self.spawn_from_living(target_pool_id, &center, params)
+            };
 
             self.generation += 1;
             self.organisms.push(new_organism);
         }
+
+        // Seed empty pools with organisms from non-empty pools
+        self.seed_empty_pools(params);
 
         let current_food_count = self.food.len();
         let max_allowed_food = params.max_food.saturating_sub(current_food_count);
@@ -357,6 +413,165 @@ impl Ecosystem {
         let json = std::fs::read_to_string(path)?;
         let ecosystem = serde_json::from_str(&json)?;
         Ok(ecosystem)
+    }
+
+    /// Generates a random position using the same method as `Organism::new_random`.
+    fn random_spawn_position(center: &Array1<f32>, _params: &Params) -> Array1<f32> {
+        use ndarray_rand::rand::distributions::Uniform;
+        Array1::random(2, Uniform::new(0., 1.)) * center * 2.0
+    }
+
+    /// Selects a pool ID weighted by pool size (larger pools more likely).
+    fn select_pool_weighted_by_size(&self, params: &Params) -> usize {
+        // Count organisms per pool
+        let mut pool_counts = vec![0; params.num_genetic_pools];
+        for organism in &self.organisms {
+            if organism.pool_id < params.num_genetic_pools {
+                pool_counts[organism.pool_id] += 1;
+            }
+        }
+
+        let total_organisms: usize = pool_counts.iter().sum();
+        if total_organisms == 0 {
+            // No organisms, return random pool
+            return rand::rng().random_range(0..params.num_genetic_pools);
+        }
+
+        // Sample weighted by pool size
+        let mut cumulative = 0;
+        let target = rand::rng().random_range(0..total_organisms);
+        for (pool_id, &count) in pool_counts.iter().enumerate() {
+            cumulative += count;
+            if target < cumulative {
+                return pool_id;
+            }
+        }
+
+        // Fallback (shouldn't happen)
+        params.num_genetic_pools - 1
+    }
+
+    /// Spawns an organism by cloning from a living organism in the target pool.
+    fn spawn_from_living(
+        &self,
+        target_pool_id: usize,
+        center: &Array1<f32>,
+        params: &Params,
+    ) -> organism::Organism {
+        // Find all organisms in target pool
+        let pool_organisms: Vec<&organism::Organism> = self
+            .organisms
+            .iter()
+            .filter(|org| org.pool_id == target_pool_id)
+            .collect();
+
+        if pool_organisms.is_empty() {
+            // No organisms in pool, create random organism
+            return organism::Organism::new_random(
+                self.generation as usize,
+                center,
+                params.signal_size,
+                params.memory_size,
+                params.num_vision_directions,
+                params.vision_radius,
+                params.fov,
+                params.layer_sizes.clone(),
+                target_pool_id,
+                params,
+            );
+        }
+
+        // Select random organism from pool and clone with mutation
+        let parent = pool_organisms[rand::rng().random_range(0..pool_organisms.len())];
+        let mut child = parent.clone();
+        child.id = self.generation as usize;
+        child.age = 0.0;
+        child.score = 0;
+        child.pos = Self::random_spawn_position(center, params);
+
+        // Apply mutation to brain
+        child.brain.mutate(0.1); // Use moderate mutation rate
+
+        child
+    }
+
+    /// Seeds empty pools with organisms from non-empty pools.
+    fn seed_empty_pools(&mut self, params: &Params) {
+        // Count organisms per pool
+        let mut pool_counts = vec![0; params.num_genetic_pools];
+        for organism in &self.organisms {
+            if organism.pool_id < params.num_genetic_pools {
+                pool_counts[organism.pool_id] += 1;
+            }
+        }
+
+        let center = Array1::from_vec(vec![params.box_width / 2., params.box_height / 2.]);
+
+        // Find empty and non-empty pools
+        for pool_id in 0..params.num_genetic_pools {
+            if pool_counts[pool_id] == 0 {
+                // Pool is empty, find a non-empty pool to seed from
+                let non_empty_pools: Vec<usize> = pool_counts
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &count)| count > 0)
+                    .map(|(id, _)| id)
+                    .collect();
+
+                if non_empty_pools.is_empty() {
+                    // All pools empty, create random organisms
+                    for _ in 0..params.empty_pool_seed_count {
+                        let new_organism = organism::Organism::new_random(
+                            self.generation as usize,
+                            &center,
+                            params.signal_size,
+                            params.memory_size,
+                            params.num_vision_directions,
+                            params.vision_radius,
+                            params.fov,
+                            params.layer_sizes.clone(),
+                            pool_id,
+                            params,
+                        );
+                        self.generation += 1;
+                        self.organisms.push(new_organism);
+                    }
+                } else {
+                    // Select random non-empty pool
+                    let source_pool_id =
+                        non_empty_pools[rand::rng().random_range(0..non_empty_pools.len())];
+
+                    // Clone organisms in source pool (collect ownership to avoid borrow issues)
+                    let source_organisms: Vec<organism::Organism> = self
+                        .organisms
+                        .iter()
+                        .filter(|org| org.pool_id == source_pool_id)
+                        .cloned()
+                        .collect();
+
+                    // Create new organisms from cloned source pool to empty pool
+                    for _ in 0..params.empty_pool_seed_count {
+                        if let Some(parent) = source_organisms
+                            .get(rand::rng().random_range(0..source_organisms.len()))
+                        {
+                            let mut child = parent.clone();
+                            child.id = self.generation as usize;
+                            child.pool_id = pool_id; // Change to empty pool
+                            child.age = 0.0;
+                            child.score = 0;
+                            child.pos = Self::random_spawn_position(&center, params);
+                            child.brain.mutate(0.1); // Mutate to create diversity
+
+                            self.generation += 1;
+                            self.organisms.push(child);
+                        }
+                    }
+                }
+
+                // Update pool counts after seeding
+                pool_counts[pool_id] = params.empty_pool_seed_count;
+            }
+        }
     }
 
     /// Returns a reference to the graveyard.

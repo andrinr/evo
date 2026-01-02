@@ -10,7 +10,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 8;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 7,
+        3 * num_vision_directions + signal_size + memory_size + 7,
         16,
         signal_size + memory_size + 6,
     ];
@@ -60,6 +60,9 @@ fn create_test_params() -> Params {
         graveyard_size: 100,
         reproduction_energy_multiplier: 1.2,
         reproduction_radius: 15.0,
+        spawn_from_graveyard: true,
+        unbalanced_pool_sampling: false,
+        empty_pool_seed_count: 5,
     }
 }
 
@@ -78,7 +81,7 @@ fn test_scent_sense_size() {
     let params = create_test_params();
     let scent = Scent::new();
 
-    let expected_size = params.signal_size + 1; // signal channels + DNA distance
+    let expected_size = params.signal_size; // signal channels
     assert_eq!(scent.input_size(&params), expected_size);
     assert_eq!(scent.name(), "Scent");
 }
@@ -102,7 +105,7 @@ fn test_perception_combines_senses() {
 
     // Total size should be sum of all senses
     let expected_size = (params.num_vision_directions * 3) // vision
-        + (params.signal_size + 1) // scent
+        + params.signal_size // scent
         + (params.memory_size + 7); // proprioception
 
     assert_eq!(perception.total_input_size(&params), expected_size);

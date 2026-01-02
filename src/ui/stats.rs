@@ -6,6 +6,18 @@ use std::collections::VecDeque;
 
 use super::ui::UIState;
 
+/// Get a distinct color for each genetic pool matching the organism rendering colors
+fn get_pool_color(pool_id: usize) -> egui::Color32 {
+    match pool_id % 10 {
+        0 => egui::Color32::from_rgb(255, 100, 100), // Red
+        1 => egui::Color32::from_rgb(100, 150, 255), // Blue
+        2 => egui::Color32::from_rgb(255, 255, 100), // Yellow
+        3 => egui::Color32::from_rgb(255, 100, 255), // Magenta
+        4 => egui::Color32::from_rgb(100, 255, 255), // Cyan
+        _ => egui::Color32::from_rgb(200, 200, 200), // Gray (fallback)
+    }
+}
+
 pub(super) fn draw_stats_panel(
     egui_ctx: &egui::Context,
     state: &mut UIState,
@@ -54,11 +66,31 @@ pub(super) fn draw_stats_panel(
             // Simulation speed slider
             ui.label("Simulation Speed");
             ui.add(
-                egui::Slider::new(&mut state.simulation_speed, 0.1..=500.0)
+                egui::Slider::new(&mut state.simulation_speed, 0.1..=50.0)
                     .text("x")
                     .logarithmic(false),
             );
             ui.label(format!("Speed: {:.1}x", state.simulation_speed));
+            ui.label(format!("Steps/sec: {:.1}", state.actual_steps_per_sec));
+            ui.label(format!("Step time: {:.2}ms", state.last_step_time_ms));
+
+            // Detailed timing breakdown
+            ui.collapsing("Timing Breakdown", |ui| {
+                let timing = &ecosystem.timing_stats;
+                ui.label(format!("Spatial index: {:.2}ms", timing.spatial_index_ms));
+                ui.label(format!(
+                    "Ecosystem clone: {:.2}ms",
+                    timing.ecosystem_clone_ms
+                ));
+                ui.label(format!(
+                    "Parallel update: {:.2}ms",
+                    timing.parallel_update_ms
+                ));
+                ui.label(format!("Projectiles: {:.2}ms", timing.projectile_update_ms));
+                ui.label(format!("Event apply: {:.2}ms", timing.event_application_ms));
+                ui.label(format!("Cleanup: {:.2}ms", timing.cleanup_ms));
+                ui.label(format!("Total: {:.2}ms", timing.total_ms));
+            });
 
             ui.separator();
 
@@ -162,12 +194,12 @@ pub(super) fn draw_stats_panel(
                 ui.separator();
                 ui.label("Spawn Rates (per second)");
                 ui.add(
-                    egui::Slider::new(&mut params.organism_spawn_rate, 0.1..=40.0)
+                    egui::Slider::new(&mut params.organism_spawn_rate, 0.1..=30.0)
                         .text("Organisms")
                         .logarithmic(true),
                 );
                 ui.add(
-                    egui::Slider::new(&mut params.food_spawn_rate, 0.01..=10.0)
+                    egui::Slider::new(&mut params.food_spawn_rate, 0.01..=30.0)
                         .text("Food")
                         .logarithmic(true),
                 );
@@ -226,15 +258,12 @@ pub(super) fn draw_stats_panel(
 
                 ui.separator();
 
-                // Time series plots
-                ui.heading("Average Age Over Time");
-                draw_time_series_plot_compact(
-                    ui,
-                    "avg_age_plot",
-                    &state.avg_age_history,
-                    "Time (s)",
-                    "Avg Age",
-                );
+                // Pool age plot
+                if params.num_genetic_pools > 1 {
+                    ui.heading("Average Age Per Pool Over Time");
+                    draw_pool_ages_plot(ui, state, params);
+                    ui.separator();
+                }
 
                 ui.separator();
             }
@@ -281,51 +310,11 @@ fn draw_time_series_plot(
         });
 }
 
-fn draw_time_series_plot_compact(
-    ui: &mut egui::Ui,
-    id: &str,
-    data: &VecDeque<(f64, f64)>,
-    x_label: &str,
-    y_label: &str,
-) {
-    if data.is_empty() {
-        ui.label("Collecting data...");
-        return;
-    }
-
-    let points: PlotPoints = data.iter().map(|&(x, y)| [x, y]).collect();
-    let line = Line::new(points);
-
-    Plot::new(id)
-        .height(200.0)  // Same as pool score plot
-        .show_axes([true, true])
-        .label_formatter(|_name, value| {
-            format!("{}: {:.1}\n{}: {:.2}", x_label, value.x, y_label, value.y)
-        })
-        .show(ui, |plot_ui| {
-            plot_ui.line(line);
-        });
-}
-
 fn draw_pool_scores_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
     if state.pool_score_histories.is_empty() {
         ui.label("Collecting data...");
         return;
     }
-
-    // Define colors for each pool (matching the graphics colors)
-    let pool_colors = [
-        egui::Color32::from_rgb(255, 100, 100), // Red
-        egui::Color32::from_rgb(100, 150, 255), // Blue
-        egui::Color32::from_rgb(100, 255, 100), // Green
-        egui::Color32::from_rgb(255, 255, 100), // Yellow
-        egui::Color32::from_rgb(255, 100, 255), // Magenta
-        egui::Color32::from_rgb(100, 255, 255), // Cyan
-        egui::Color32::from_rgb(255, 150, 100), // Orange
-        egui::Color32::from_rgb(200, 100, 255), // Purple
-        egui::Color32::from_rgb(255, 200, 150), // Peach
-        egui::Color32::from_rgb(150, 255, 200), // Mint
-    ];
 
     Plot::new("pool_scores_plot")
         .height(200.0)
@@ -344,7 +333,38 @@ fn draw_pool_scores_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
                         .map(|&(x, y)| [x, y])
                         .collect();
 
-                    let color = pool_colors[pool_id % pool_colors.len()];
+                    let color = get_pool_color(pool_id);
+                    let line = Line::new(points)
+                        .color(color)
+                        .name(format!("Pool {}", pool_id));
+
+                    plot_ui.line(line);
+                }
+            }
+        });
+}
+
+fn draw_pool_ages_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
+    if state.pool_age_histories.is_empty() {
+        ui.label("Collecting data...");
+        return;
+    }
+
+    Plot::new("pool_ages_plot")
+        .height(200.0)
+        .show_axes([true, true])
+        .label_formatter(|name, value| {
+            format!("{}: Time: {:.1}s, Age: {:.1}", name, value.x, value.y)
+        })
+        .show(ui, |plot_ui| {
+            for pool_id in 0..params.num_genetic_pools.min(state.pool_age_histories.len()) {
+                if !state.pool_age_histories[pool_id].is_empty() {
+                    let points: PlotPoints = state.pool_age_histories[pool_id]
+                        .iter()
+                        .map(|&(x, y)| [x, y])
+                        .collect();
+
+                    let color = get_pool_color(pool_id);
                     let line = Line::new(points)
                         .color(color)
                         .name(format!("Pool {}", pool_id));

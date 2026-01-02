@@ -124,8 +124,26 @@ pub(super) fn draw_organism_detail_panel(
             ui.separator();
 
             // Neural network visualization
-            ui.heading("Neural Network");
-            super::nn::draw_neural_network(ui, organism, params);
+            match &organism.brain {
+                simulation::brain::Brain::Transformer {
+                    input_embed,
+                    blocks,
+                    output_proj,
+                } => {
+                    ui.heading("Transformer Architecture");
+                    draw_transformer_visualization(
+                        ui,
+                        input_embed,
+                        blocks,
+                        output_proj,
+                        &organism.last_brain_inputs,
+                    );
+                }
+                simulation::brain::Brain::MLP { .. } => {
+                    ui.heading("Neural Network");
+                    super::nn::draw_neural_network(ui, organism, params);
+                }
+            }
         });
 }
 
@@ -214,9 +232,9 @@ fn draw_signal_bars(ui: &mut egui::Ui, signal: &ndarray::Array1<f32>) {
 }
 
 pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<String> {
-    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal+dna_dist) + memory + energy + rotation + position
+    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal) + memory + energy + rotation + position
     // vision: 3 * num_vision_directions
-    // scent: signal_size + 1
+    // scent: signal_size
     // memory: memory_size
     // energy: 1
     // rotation: 2 (sin, cos)
@@ -224,7 +242,7 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
 
     let vision_inputs = 3 * params.num_vision_directions;
     let scent_start = vision_inputs;
-    let scent_end = scent_start + params.signal_size + 1;
+    let scent_end = scent_start + params.signal_size;
     let memory_start = scent_end;
     let memory_end = memory_start + params.memory_size;
     let energy_idx = memory_end;
@@ -243,11 +261,9 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
         } else {
             Some(format!("V{} T", direction)) // Type (organism vs food)
         }
-    } else if neuron_idx < scent_end - 1 {
+    } else if neuron_idx < scent_end {
         let signal_idx = neuron_idx - scent_start;
         Some(format!("Scent {}", signal_idx))
-    } else if neuron_idx == scent_end - 1 {
-        Some("DNA Dist".to_string())
     } else if neuron_idx < memory_end {
         let mem_idx = neuron_idx - memory_start;
         Some(format!("Mem {}", mem_idx))
@@ -305,5 +321,157 @@ pub(super) fn get_output_label(neuron_idx: usize, params: &Params) -> Option<Str
         Some("Share".to_string())
     } else {
         None
+    }
+}
+
+/// Visualizes transformer architecture with weight heatmaps
+fn draw_transformer_visualization(
+    ui: &mut egui::Ui,
+    input_embed: &crate::simulation::brain::Mlp,
+    blocks: &[crate::simulation::brain::TransformerBlock],
+    output_proj: &crate::simulation::brain::Mlp,
+    inputs: &ndarray::Array1<f32>,
+) {
+    const CELL_SIZE: f32 = 3.0;
+    const MAX_DISPLAY_SIZE: usize = 64;
+
+    ui.label(format!("Input: {} dims", inputs.len()));
+
+    // Show input embedding weights as heatmap
+    ui.collapsing("Input Embedding Weights", |ui| {
+        let weights = &input_embed.weights;
+        let (rows, cols) = (
+            weights.nrows().min(MAX_DISPLAY_SIZE),
+            weights.ncols().min(MAX_DISPLAY_SIZE),
+        );
+
+        ui.label(format!(
+            "Shape: {} × {} (showing {}×{})",
+            weights.nrows(),
+            weights.ncols(),
+            rows,
+            cols
+        ));
+
+        let (response, painter) = ui.allocate_painter(
+            egui::vec2((cols as f32) * CELL_SIZE, (rows as f32) * CELL_SIZE),
+            egui::Sense::hover(),
+        );
+
+        for i in 0..rows {
+            for j in 0..cols {
+                let weight = weights[[i, j]];
+                let normalized = f32::midpoint(weight.tanh(), 1.0);
+                let color = inferno_colormap(normalized);
+
+                let rect = egui::Rect::from_min_size(
+                    response.rect.min + egui::vec2(j as f32 * CELL_SIZE, i as f32 * CELL_SIZE),
+                    egui::vec2(CELL_SIZE, CELL_SIZE),
+                );
+                painter.rect_filled(rect, 0.0, color);
+            }
+        }
+    });
+
+    // Show each transformer block
+    for (block_idx, block) in blocks.iter().enumerate() {
+        ui.collapsing(
+            format!("Block {} ({} heads)", block_idx + 1, block.heads.len()),
+            |ui| {
+                // Show attention head weights
+                for (head_idx, head) in block.heads.iter().enumerate().take(4) {
+                    ui.collapsing(format!("Head {}", head_idx + 1), |ui| {
+                        ui.horizontal(|ui| {
+                            // Query weights
+                            ui.vertical(|ui| {
+                                ui.label("Q");
+                                draw_weight_grid(ui, &head.w_q, CELL_SIZE, MAX_DISPLAY_SIZE);
+                            });
+
+                            // Key weights
+                            ui.vertical(|ui| {
+                                ui.label("K");
+                                draw_weight_grid(ui, &head.w_k, CELL_SIZE, MAX_DISPLAY_SIZE);
+                            });
+
+                            // Value weights
+                            ui.vertical(|ui| {
+                                ui.label("V");
+                                draw_weight_grid(ui, &head.w_v, CELL_SIZE, MAX_DISPLAY_SIZE);
+                            });
+                        });
+                    });
+                }
+
+                if block.heads.len() > 4 {
+                    ui.label(format!("... and {} more heads", block.heads.len() - 4));
+                }
+            },
+        );
+    }
+
+    // Show output projection
+    ui.collapsing("Output Projection Weights", |ui| {
+        let weights = &output_proj.weights;
+        let (rows, cols) = (
+            weights.nrows().min(MAX_DISPLAY_SIZE),
+            weights.ncols().min(MAX_DISPLAY_SIZE),
+        );
+
+        ui.label(format!(
+            "Shape: {} × {} (showing {}×{})",
+            weights.nrows(),
+            weights.ncols(),
+            rows,
+            cols
+        ));
+
+        let (response, painter) = ui.allocate_painter(
+            egui::vec2((cols as f32) * CELL_SIZE, (rows as f32) * CELL_SIZE),
+            egui::Sense::hover(),
+        );
+
+        for i in 0..rows {
+            for j in 0..cols {
+                let weight = weights[[i, j]];
+                let normalized = f32::midpoint(weight.tanh(), 1.0);
+                let color = inferno_colormap(normalized);
+
+                let rect = egui::Rect::from_min_size(
+                    response.rect.min + egui::vec2(j as f32 * CELL_SIZE, i as f32 * CELL_SIZE),
+                    egui::vec2(CELL_SIZE, CELL_SIZE),
+                );
+                painter.rect_filled(rect, 0.0, color);
+            }
+        }
+    });
+}
+
+/// Helper function to draw a weight matrix as a colored grid
+fn draw_weight_grid(
+    ui: &mut egui::Ui,
+    weights: &ndarray::Array2<f32>,
+    cell_size: f32,
+    max_size: usize,
+) {
+    let (rows, cols) = (weights.nrows().min(max_size), weights.ncols().min(max_size));
+
+    let (response, painter) = ui.allocate_painter(
+        egui::vec2((cols as f32) * cell_size, (rows as f32) * cell_size),
+        egui::Sense::hover(),
+    );
+
+    for i in 0..rows {
+        for j in 0..cols {
+            let weight = weights[[i, j]];
+            let normalized = f32::midpoint(weight.tanh(), 1.0);
+            let color = inferno_colormap(normalized);
+
+            let rect = egui::Rect::from_min_size(
+                response.rect.min + egui::vec2(j as f32 * cell_size, i as f32 * cell_size),
+                egui::vec2(cell_size, cell_size),
+            );
+            painter.rect_filled(rect, 0.0, color);
+        }
     }
 }

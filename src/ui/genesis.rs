@@ -52,6 +52,24 @@ pub fn draw_genesis_screen(params: &mut Params) -> bool {
                         egui::Slider::new(&mut params.graveyard_size, 50..=1000)
                             .text("Graveyard Size (breeding pool)"),
                     );
+
+                    ui.checkbox(
+                        &mut params.spawn_from_graveyard,
+                        "Spawn from Graveyard (vs Living)",
+                    );
+                    ui.label("If checked: Evolution (graveyard). If unchecked: Cloning (living)");
+
+                    ui.checkbox(
+                        &mut params.unbalanced_pool_sampling,
+                        "Unbalanced Pool Sampling",
+                    );
+                    ui.label("If checked: Favor largest pool. If unchecked: Uniform sampling");
+
+                    ui.add(
+                        egui::Slider::new(&mut params.empty_pool_seed_count, 1..=20)
+                            .text("Empty Pool Seed Count"),
+                    );
+                    ui.label("Number of organisms to seed into empty pools");
                 });
 
                 ui.collapsing("Brain Architecture", |ui| {

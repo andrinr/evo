@@ -14,17 +14,26 @@ use std::time::{Duration, Instant};
 mod graphics;
 mod ui;
 
+/// Calculates the neural network layer sizes based on simulation parameters.
+fn calculate_layer_sizes(
+    num_vision_directions: usize,
+    signal_size: usize,
+    memory_size: usize,
+) -> Vec<usize> {
+    vec![
+        3 * num_vision_directions + signal_size + memory_size + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y)
+        128,                                                       // hidden layer 1
+        48,                                                        // hidden layer 2
+        signal_size + memory_size + 6, // output: signal + memory + rotation + acceleration + attack + share + asexual_repro + sexual_repro
+    ]
+}
+
 fn create_simulation_params() -> Params {
-    let signal_size: usize = 8;
-    let num_vision_directions: usize = 9;
+    let signal_size: usize = 16;
+    let num_vision_directions: usize = 17;
     let memory_size: usize = 32;
 
-    let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y) = 71
-        128,                                                             // hidden layer 1
-        64,                                                              // hidden layer 2
-        signal_size + memory_size + 6, // output: signal + memory + rotation + acceleration + attack + share + asexual_repro + sexual_repro = 46
-    ];
+    let layer_sizes = calculate_layer_sizes(num_vision_directions, signal_size, memory_size);
 
     let vision_radius = 50.0;
     let scent_radius = 40.0;
@@ -60,24 +69,27 @@ fn create_simulation_params() -> Params {
         attack_damage_rate: 4.0,
         attack_cooldown: 0.1,
         corpse_energy_ratio: 2.0,
-        max_energy: 2.0,
+        max_energy: 4.0,
         food_energy: 1.0,
         projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
         projectile_radius: 2.0,
-        organism_spawn_rate: 5.0,
+        organism_spawn_rate: 6.0,
         food_spawn_rate: 5.0,
         food_lifetime: 20.0, // 0 = unlimited
         num_genetic_pools: 3,
         pool_interbreed_prob: 0.001, // 5% chance of inter-pool breeding
-        brain_type: simulation::brain::BrainType::Transformer,
+        brain_type: simulation::brain::BrainType::MLP,
         transformer_model_dim: 32,
         transformer_num_blocks: 1,
         transformer_num_heads: 4,
-        transformer_head_dim: 8,
+        transformer_head_dim: 16,
         transformer_ff_dim: 32,
-        graveyard_size: 100,
-        reproduction_energy_multiplier: 1.2,
+        graveyard_size: 50,
+        reproduction_energy_multiplier: 0.9,
+        spawn_from_graveyard: false,
+        unbalanced_pool_sampling: false,
+        empty_pool_seed_count: 5,
     }
 }
 
@@ -192,6 +204,7 @@ fn update_and_render(
     // Update history data
     ui_state.update_history(eco);
     ui_state.update_pool_scores(eco, params);
+    ui_state.update_pool_ages(eco, params);
 
     // Handle organism selection
     handle_organism_selection(eco, params, ui_state);
@@ -280,34 +293,22 @@ async fn main() {
             let speed = *speed_clone.lock().unwrap();
             let steps_to_run = speed.max(0.1).round() as usize;
 
-            // Run steps in small batches to avoid holding lock too long
-            // This keeps UI responsive even at high speeds
-            const MAX_STEPS_PER_LOCK: usize = 4;
             let mut remaining_steps = steps_to_run;
 
             let step_start = Instant::now();
             while remaining_steps > 0 {
-                let batch_size = remaining_steps.min(MAX_STEPS_PER_LOCK);
-
                 let mut eco_lock = ecosystem_clone.lock().unwrap();
                 let params_lock = params_clone.lock().unwrap();
 
                 if let Some(ref mut eco) = *eco_lock {
-                    for _ in 0..batch_size {
-                        eco.step(&params_lock, simulation_dt);
-                        eco.spawn(&params_lock, simulation_dt);
-                    }
+                    eco.step(&params_lock, simulation_dt);
+                    eco.spawn(&params_lock, simulation_dt);
                 }
 
                 drop(params_lock);
                 drop(eco_lock);
 
-                remaining_steps -= batch_size;
-
-                // Yield briefly to allow UI thread to acquire lock (only at very high speeds)
-                if remaining_steps > 0 && steps_to_run > 10 {
-                    thread::sleep(Duration::from_micros(50));
-                }
+                remaining_steps -= 1;
             }
             let step_duration = step_start.elapsed();
 
@@ -363,15 +364,11 @@ async fn main() {
                 let should_start = ui::draw_genesis_screen(&mut params_lock);
                 if should_start {
                     // Recalculate layer sizes based on current parameters
-                    params_lock.layer_sizes = vec![
-                        3 * params_lock.num_vision_directions
-                            + (params_lock.signal_size + 1)
-                            + params_lock.memory_size
-                            + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y)
-                        128,                                                   // hidden layer 1
-                        64,                                                    // hidden layer 2
-                        params_lock.signal_size + params_lock.memory_size + 6, // output: signal + memory + rotation + velocity + attack + share + asexual_repro + sexual_repro
-                    ];
+                    params_lock.layer_sizes = calculate_layer_sizes(
+                        params_lock.num_vision_directions,
+                        params_lock.signal_size,
+                        params_lock.memory_size,
+                    );
                 }
                 should_start
             }; // params_lock dropped here

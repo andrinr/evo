@@ -12,7 +12,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + (signal_size + 1) + memory_size + 7,
+        3 * num_vision_directions + signal_size + memory_size + 7,
         10,
         signal_size + memory_size + 6,
     ];
@@ -64,6 +64,9 @@ fn create_test_params() -> Params {
         graveyard_size: 400,
         reproduction_energy_multiplier: 1.2,
         reproduction_radius: 15.0,
+        spawn_from_graveyard: true,
+        unbalanced_pool_sampling: false,
+        empty_pool_seed_count: 5,
     }
 }
 

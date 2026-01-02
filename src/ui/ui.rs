@@ -14,6 +14,7 @@ pub struct UIState {
     pub organism_count_history: VecDeque<(f64, f64)>,
     pub food_count_history: VecDeque<(f64, f64)>,
     pub pool_score_histories: Vec<VecDeque<(f64, f64)>>, // One history per pool
+    pub pool_age_histories: Vec<VecDeque<(f64, f64)>>,   // Average age per pool
     last_update_time: f32,
     update_interval: f32,
     pub save_requested: bool,
@@ -37,6 +38,7 @@ impl UIState {
             organism_count_history: VecDeque::new(),
             food_count_history: VecDeque::new(),
             pool_score_histories: Vec::new(),
+            pool_age_histories: Vec::new(),
             last_update_time: 0.0,
             update_interval: 0.5, // Update every 0.5 seconds
             save_requested: false,
@@ -119,6 +121,39 @@ impl UIState {
 
             if self.pool_score_histories[pool_id].len() > MAX_HISTORY_POINTS {
                 self.pool_score_histories[pool_id].pop_front();
+            }
+        }
+    }
+
+    pub fn update_pool_ages(
+        &mut self,
+        ecosystem: &simulation::ecosystem::Ecosystem,
+        params: &Params,
+    ) {
+        // Ensure we have enough histories for all pools
+        while self.pool_age_histories.len() < params.num_genetic_pools {
+            self.pool_age_histories.push(VecDeque::new());
+        }
+
+        // Calculate average age for each pool
+        for pool_id in 0..params.num_genetic_pools {
+            let pool_organisms: Vec<&simulation::organism::Organism> = ecosystem
+                .organisms
+                .iter()
+                .filter(|org| org.pool_id == pool_id)
+                .collect();
+
+            let avg_age = if pool_organisms.is_empty() {
+                0.0
+            } else {
+                pool_organisms.iter().map(|o| o.age as f64).sum::<f64>()
+                    / pool_organisms.len() as f64
+            };
+
+            self.pool_age_histories[pool_id].push_back((ecosystem.time as f64, avg_age));
+
+            if self.pool_age_histories[pool_id].len() > MAX_HISTORY_POINTS {
+                self.pool_age_histories[pool_id].pop_front();
             }
         }
     }

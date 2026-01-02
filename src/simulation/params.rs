@@ -100,4 +100,13 @@ pub struct Params {
     /// Energy multiplier for offspring (offspring gets `parent_energy` * this factor).
     /// Default: 1.2 (20% bonus). Range: 0.5-3.0.
     pub reproduction_energy_multiplier: f32,
+    /// If true, spawn organisms from graveyard (evolution). If false, clone from living organisms.
+    /// Default: true (evolution-based spawning).
+    pub spawn_from_graveyard: bool,
+    /// If true, sample organisms preferentially from the largest pool (competitive dynamics).
+    /// If false, sample uniformly across all pools. Default: false (balanced pools).
+    pub unbalanced_pool_sampling: bool,
+    /// Number of organisms to seed into an empty pool from a non-empty pool.
+    /// Default: 5. Range: 1-20.
+    pub empty_pool_seed_count: usize,
 }

@@ -9,11 +9,10 @@ use super::super::params::Params;
 use super::Organism;
 use super::sense::Sense;
 
-/// Scent sense that detects chemical signals and DNA similarity.
+/// Scent sense that detects chemical signals.
 ///
 /// Outputs:
 /// - Signal channels from nearby organisms (RGB color), weighted by distance (closer = stronger)
-/// - DNA distance to the nearest organism
 ///
 /// The scent strength falls off linearly with distance:
 /// - 1.0 at distance 0
@@ -41,11 +40,10 @@ impl Sense for Scent {
         params: &Params,
         trees: Option<&super::super::ecosystem::SpatialTrees>,
     ) -> Array1<f32> {
-        use super::super::dna;
         use kdtree::KdTree;
         use kdtree::distance::squared_euclidean;
 
-        let mut scent_outputs = Array1::zeros(params.signal_size + 1);
+        let mut scent_outputs = Array1::zeros(params.signal_size);
 
         // Use provided trees or build them
         let (scent_orgs, scent_foods) = if let Some(spatial_trees) = trees {
@@ -108,10 +106,8 @@ impl Sense for Scent {
             (scent_orgs, scent_foods)
         };
 
-        // Scent: signal (RGB) + DNA distance to nearest organism
+        // Scent: signal channels from nearby entities
         let mut scent_signal = Array1::zeros(params.signal_size);
-        let mut closest_dna_distance = 0.0f32;
-        let mut min_org_distance = f32::MAX;
 
         // Add organism signals weighted by distance (closer = stronger)
         for (_, org_id) in &scent_orgs {
@@ -133,13 +129,6 @@ impl Sense for Scent {
             for i in 0..params.signal_size {
                 scent_signal[i] += neighbor_org.signal[i] * distance_factor;
             }
-
-            // Track closest organism for DNA distance
-            if dist < min_org_distance {
-                min_org_distance = dist;
-                // Calculate DNA distance with periodic boundary conditions
-                closest_dna_distance = dna::periodic_distance(&organism.dna, &neighbor_org.dna);
-            }
         }
 
         // Add food signals weighted by distance
@@ -160,18 +149,14 @@ impl Sense for Scent {
         }
 
         // Copy signal to outputs
-        for i in 0..params.signal_size {
-            scent_outputs[i] = scent_signal[i];
-        }
-        // Add DNA distance to closest organism
-        scent_outputs[params.signal_size] = closest_dna_distance;
+        scent_outputs.assign(&scent_signal);
 
         scent_outputs
     }
 
     fn input_size(&self, params: &Params) -> usize {
-        // signal_size channels + 1 for DNA distance
-        params.signal_size + 1
+        // signal_size channels
+        params.signal_size
     }
 
     fn name(&self) -> &'static str {

@@ -277,7 +277,7 @@ impl EvolutionEngine {
 
 /// Samples a mutation scale using logarithmic random distribution.
 fn sample_mutation_scale() -> f32 {
-    let min = 0.002f32;
+    let min = 0.0002f32;
     let max = 0.2f32;
     let log_min = min.ln();
     let log_max = max.ln();
