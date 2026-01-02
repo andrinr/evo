@@ -88,6 +88,7 @@ fn test_organism_locatable_update() {
         age: 0.0,
         score: 0,
         pos: Array1::from_vec(vec![10.0, 20.0]),
+        vel: Array1::zeros(2),
         rot: 0.0,
         energy: 100.0,
         signal: Array1::zeros(3),

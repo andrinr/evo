@@ -12,7 +12,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 3;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + signal_size + memory_size + 7,
+        3 * num_vision_directions + signal_size + memory_size + 9,
         10,
         signal_size + memory_size + 6,
     ];

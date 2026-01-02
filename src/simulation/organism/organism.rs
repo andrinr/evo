@@ -31,6 +31,8 @@ pub struct Organism {
     pub score: i32,
     /// Position in 2D space.
     pub pos: Array1<f32>,
+    /// Velocity in 2D space.
+    pub vel: Array1<f32>,
     /// Rotation in radians.
     pub rot: f32,
     /// Current energy (dies when <= 0).
@@ -128,6 +130,7 @@ impl Organism {
             age: 0.0,
             score: 0,
             pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
+            vel: Array1::zeros(2),
             rot: rand::random::<f32>() * std::f32::consts::PI * 2.,
             energy: 1.0,
             signal: Array1::random(signal_size, Uniform::new(0.0, 1.0)),
@@ -262,6 +265,9 @@ impl Locatable for Organism {
     }
 
     fn update(&mut self, dt: f32) {
+        // Update position based on velocity
+        self.pos += &(&self.vel * dt);
+
         // Update age and attack cooldown
         self.age += dt;
         if self.attack_cooldown > 0.0 {

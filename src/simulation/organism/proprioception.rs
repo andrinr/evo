@@ -17,6 +17,7 @@ use super::sense::Sense;
 /// - Energy level (normalized)
 /// - Rotation (sin and cos components for continuous encoding)
 /// - Position encoding (sin and cos of normalized x and y coordinates)
+/// - Velocity (x and y components)
 pub struct Proprioception;
 
 impl Proprioception {
@@ -41,8 +42,8 @@ impl Sense for Proprioception {
         _trees: Option<&super::super::ecosystem::SpatialTrees>,
     ) -> Array1<f32> {
         let memory_size = organism.memory.len();
-        // memory + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) = memory_size + 7
-        let mut proprio_outputs = Array1::zeros(memory_size + 7);
+        // memory + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) + velocity(x,y) = memory_size + 9
+        let mut proprio_outputs = Array1::zeros(memory_size + 9);
 
         let mut idx = 0;
 
@@ -74,13 +75,19 @@ impl Sense for Proprioception {
         proprio_outputs[idx] = norm_y.sin();
         idx += 1;
         proprio_outputs[idx] = norm_y.cos();
+        idx += 1;
+
+        // Add velocity (x and y components)
+        proprio_outputs[idx] = organism.vel[0];
+        idx += 1;
+        proprio_outputs[idx] = organism.vel[1];
 
         proprio_outputs
     }
 
     fn input_size(&self, params: &Params) -> usize {
-        // memory_size + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y)
-        params.memory_size + 7
+        // memory_size + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) + velocity(x,y)
+        params.memory_size + 9
     }
 
     fn name(&self) -> &'static str {

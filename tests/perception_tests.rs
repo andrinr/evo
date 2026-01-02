@@ -10,7 +10,7 @@ fn create_test_params() -> Params {
     let memory_size: usize = 8;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + signal_size + memory_size + 7,
+        3 * num_vision_directions + signal_size + memory_size + 9,
         16,
         signal_size + memory_size + 6,
     ];
@@ -91,7 +91,7 @@ fn test_proprioception_sense_size() {
     let params = create_test_params();
     let proprio = Proprioception::new();
 
-    let expected_size = params.memory_size + 7; // memory + energy + rotation(2) + position(4)
+    let expected_size = params.memory_size + 9; // memory + energy + rotation(2) + position(4) + velocity(2)
     assert_eq!(proprio.input_size(&params), expected_size);
     assert_eq!(proprio.name(), "Proprioception");
 }
@@ -106,7 +106,7 @@ fn test_perception_combines_senses() {
     // Total size should be sum of all senses
     let expected_size = (params.num_vision_directions * 3) // vision
         + params.signal_size // scent
-        + (params.memory_size + 7); // proprioception
+        + (params.memory_size + 9); // proprioception
 
     assert_eq!(perception.total_input_size(&params), expected_size);
 
@@ -127,7 +127,7 @@ fn test_custom_perception() {
         Box::new(Proprioception::new()),
     ]);
 
-    let expected_size = (params.num_vision_directions * 3) + (params.memory_size + 7);
+    let expected_size = (params.num_vision_directions * 3) + (params.memory_size + 9);
     assert_eq!(perception.total_input_size(&params), expected_size);
 }
 
@@ -140,8 +140,8 @@ fn test_proprioception_reads_organism_state() {
     if let Some(organism) = ecosystem.organisms.first() {
         let outputs = proprio.sense(organism, &ecosystem, &params, None);
 
-        // Should have memory + energy + rotation(2) + position(4)
-        assert_eq!(outputs.len(), params.memory_size + 7);
+        // Should have memory + energy + rotation(2) + position(4) + velocity(2)
+        assert_eq!(outputs.len(), params.memory_size + 9);
 
         // Energy should be at memory_size index
         let energy_idx = params.memory_size;

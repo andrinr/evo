@@ -21,10 +21,10 @@ fn calculate_layer_sizes(
     memory_size: usize,
 ) -> Vec<usize> {
     vec![
-        3 * num_vision_directions + signal_size + memory_size + 7, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y)
+        3 * num_vision_directions + signal_size + memory_size + 9, // input: vision(dist+pool+type) + scent + memory + energy + rotation(sin,cos) + position(sin_x,cos_x,sin_y,cos_y) + velocity(x,y)
         128,                                                       // hidden layer 1
         48,                                                        // hidden layer 2
-        signal_size + memory_size + 6, // output: signal + memory + rotation + acceleration + attack + share + asexual_repro + sexual_repro
+        signal_size + memory_size + 6, // output: signal + memory + rotation + velocity + attack + share + asexual_repro + sexual_repro
     ]
 }
 

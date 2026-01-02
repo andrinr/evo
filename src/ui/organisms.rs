@@ -232,13 +232,14 @@ fn draw_signal_bars(ui: &mut egui::Ui, signal: &ndarray::Array1<f32>) {
 }
 
 pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<String> {
-    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal) + memory + energy + rotation + position
+    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal) + memory + energy + rotation + position + velocity
     // vision: 3 * num_vision_directions
     // scent: signal_size
     // memory: memory_size
     // energy: 1
     // rotation: 2 (sin, cos)
     // position: 4 (sin_x, cos_x, sin_y, cos_y)
+    // velocity: 2 (x, y)
 
     let vision_inputs = 3 * params.num_vision_directions;
     let scent_start = vision_inputs;
@@ -250,6 +251,8 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
     let rotation_end = rotation_start + 2;
     let position_start = rotation_end;
     let position_end = position_start + 4;
+    let velocity_start = position_end;
+    let velocity_end = velocity_start + 2;
 
     if neuron_idx < vision_inputs {
         let direction = neuron_idx / 3;
@@ -284,6 +287,13 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
             2 => Some("Pos Y Sin".to_string()),
             3 => Some("Pos Y Cos".to_string()),
             _ => None,
+        }
+    } else if neuron_idx < velocity_end {
+        let offset = neuron_idx - velocity_start;
+        if offset == 0 {
+            Some("Vel X".to_string())
+        } else {
+            Some("Vel Y".to_string())
         }
     } else {
         None
