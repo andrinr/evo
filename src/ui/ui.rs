@@ -10,13 +10,10 @@ pub struct UIState {
     pub hovered_organism_id: Option<usize>,
     pub selected_organism_id: Option<usize>,
     pub stats_panel_width: f32,
-    pub avg_age_history: VecDeque<(f64, f64)>,
-    pub organism_count_history: VecDeque<(f64, f64)>,
+    pub pool_organism_count_histories: Vec<VecDeque<(f64, f64)>>, // Organism count per pool
     pub food_count_history: VecDeque<(f64, f64)>,
     pub pool_score_histories: Vec<VecDeque<(f64, f64)>>, // One history per pool
     pub pool_age_histories: Vec<VecDeque<(f64, f64)>>,   // Average age per pool
-    pub pool_move_energy_histories: Vec<VecDeque<(f64, f64)>>, // Total movement energy loss rate per pool
-    pub pool_rot_energy_histories: Vec<VecDeque<(f64, f64)>>, // Total rotation energy loss rate per pool
     last_update_time: f32,
     update_interval: f32,
     pub save_requested: bool,
@@ -36,13 +33,10 @@ impl UIState {
             hovered_organism_id: None,
             selected_organism_id: None,
             stats_panel_width: 300.0,
-            avg_age_history: VecDeque::new(),
-            organism_count_history: VecDeque::new(),
+            pool_organism_count_histories: Vec::new(),
             food_count_history: VecDeque::new(),
             pool_score_histories: Vec::new(),
             pool_age_histories: Vec::new(),
-            pool_move_energy_histories: Vec::new(),
-            pool_rot_energy_histories: Vec::new(),
             last_update_time: 0.0,
             update_interval: 0.5, // Update every 0.5 seconds
             save_requested: false,
@@ -69,27 +63,10 @@ impl UIState {
         if ecosystem.time - self.last_update_time >= self.update_interval {
             self.last_update_time = ecosystem.time;
 
-            // Track population counts
-            self.organism_count_history
-                .push_back((ecosystem.time as f64, ecosystem.organisms.len() as f64));
+            // Track food count
             self.food_count_history
                 .push_back((ecosystem.time as f64, ecosystem.food.len() as f64));
 
-            if !ecosystem.organisms.is_empty() {
-                let avg_age: f32 = ecosystem.organisms.iter().map(|o| o.age).sum::<f32>()
-                    / ecosystem.organisms.len() as f32;
-
-                self.avg_age_history
-                    .push_back((ecosystem.time as f64, avg_age as f64));
-
-                if self.avg_age_history.len() > MAX_HISTORY_POINTS {
-                    self.avg_age_history.pop_front();
-                }
-            }
-
-            if self.organism_count_history.len() > MAX_HISTORY_POINTS {
-                self.organism_count_history.pop_front();
-            }
             if self.food_count_history.len() > MAX_HISTORY_POINTS {
                 self.food_count_history.pop_front();
             }
@@ -105,8 +82,11 @@ impl UIState {
         while self.pool_score_histories.len() < params.num_genetic_pools {
             self.pool_score_histories.push(VecDeque::new());
         }
+        while self.pool_organism_count_histories.len() < params.num_genetic_pools {
+            self.pool_organism_count_histories.push(VecDeque::new());
+        }
 
-        // Calculate average score for each pool
+        // Calculate average score and count for each pool
         for pool_id in 0..params.num_genetic_pools {
             let pool_organisms: Vec<&simulation::organism::Organism> = ecosystem
                 .organisms
@@ -114,6 +94,7 @@ impl UIState {
                 .filter(|org| org.pool_id == pool_id)
                 .collect();
 
+            let count = pool_organisms.len() as f64;
             let avg_score = if pool_organisms.is_empty() {
                 0.0
             } else {
@@ -122,9 +103,13 @@ impl UIState {
             };
 
             self.pool_score_histories[pool_id].push_back((ecosystem.time as f64, avg_score));
+            self.pool_organism_count_histories[pool_id].push_back((ecosystem.time as f64, count));
 
             if self.pool_score_histories[pool_id].len() > MAX_HISTORY_POINTS {
                 self.pool_score_histories[pool_id].pop_front();
+            }
+            if self.pool_organism_count_histories[pool_id].len() > MAX_HISTORY_POINTS {
+                self.pool_organism_count_histories[pool_id].pop_front();
             }
         }
     }
@@ -158,56 +143,6 @@ impl UIState {
 
             if self.pool_age_histories[pool_id].len() > MAX_HISTORY_POINTS {
                 self.pool_age_histories[pool_id].pop_front();
-            }
-        }
-    }
-
-    pub fn update_pool_energy_consumption(
-        &mut self,
-        ecosystem: &simulation::ecosystem::Ecosystem,
-        params: &Params,
-    ) {
-        // Ensure we have enough histories for all pools
-        while self.pool_move_energy_histories.len() < params.num_genetic_pools {
-            self.pool_move_energy_histories.push(VecDeque::new());
-        }
-        while self.pool_rot_energy_histories.len() < params.num_genetic_pools {
-            self.pool_rot_energy_histories.push(VecDeque::new());
-        }
-
-        // Calculate total energy consumption rates for each pool
-        for pool_id in 0..params.num_genetic_pools {
-            let pool_organisms: Vec<&simulation::organism::Organism> = ecosystem
-                .organisms
-                .iter()
-                .filter(|org| org.pool_id == pool_id)
-                .collect();
-
-            // Total movement energy loss rate (energy per second)
-            let total_move_energy: f32 = pool_organisms
-                .iter()
-                .map(|o| {
-                    let velocity_mag = (o.vel[0].powi(2) + o.vel[1].powi(2)).sqrt();
-                    velocity_mag * params.move_energy_rate
-                })
-                .sum();
-
-            // Total rotation energy loss rate (energy per second)
-            let total_rot_energy: f32 = pool_organisms
-                .iter()
-                .map(|o| o.rot.abs() * params.rot_energy_rate)
-                .sum();
-
-            self.pool_move_energy_histories[pool_id]
-                .push_back((ecosystem.time as f64, total_move_energy as f64));
-            self.pool_rot_energy_histories[pool_id]
-                .push_back((ecosystem.time as f64, total_rot_energy as f64));
-
-            if self.pool_move_energy_histories[pool_id].len() > MAX_HISTORY_POINTS {
-                self.pool_move_energy_histories[pool_id].pop_front();
-            }
-            if self.pool_rot_energy_histories[pool_id].len() > MAX_HISTORY_POINTS {
-                self.pool_rot_energy_histories[pool_id].pop_front();
             }
         }
     }

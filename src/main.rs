@@ -29,13 +29,13 @@ fn calculate_layer_sizes(
 }
 
 fn create_simulation_params() -> Params {
-    let signal_size: usize = 8;
-    let num_vision_directions: usize = 21;
-    let memory_size: usize = 32;
+    let signal_size: usize = 12;
+    let num_vision_directions: usize = 12;
+    let memory_size: usize = 64;
 
     let layer_sizes = calculate_layer_sizes(num_vision_directions, signal_size, memory_size);
 
-    let vision_radius = 70.0;
+    let vision_radius = 80.0;
     let scent_radius = 60.0;
     let share_radius = 10.0;
     let reproduction_radius = 10.0;
@@ -43,58 +43,59 @@ fn create_simulation_params() -> Params {
     let dna_mutation_rate = 0.1; // Standard deviation of DNA mutation
 
     Params {
-        body_radius: 5.0,
+        body_radius: 4.0,
         vision_radius,
         scent_radius,
         share_radius,
         reproduction_radius,
         dna_breeding_distance,
         dna_mutation_rate,
-        idle_energy_rate: 0.15,
+        idle_energy_rate: 0.10,
         move_energy_rate: 0.000001,
         move_multiplier: 140.0,
-        rot_multiplier: 15.0,
-        rot_energy_rate: 0.00001,
+        rot_multiplier: 30.0,
+        rot_energy_rate: 0.000001,
         num_vision_directions,
-        fov: std::f32::consts::PI * 0.75,
+        fov: std::f32::consts::PI * 0.45,
         signal_size,
         memory_size,
         n_organism: 90,
         max_organism: 250,
         n_food: 150,
-        max_food: 300,
-        box_width: 1200.0,
-        box_height: 1000.0,
+        max_food: 500,
+        box_width: 1800.0,
+        box_height: 1500.0,
         layer_sizes,
-        attack_cost_rate: 0.3,
-        attack_damage_rate: 4.0,
+        attack_cost_rate: 0.5,
+        attack_damage_rate: 3.0,
         attack_cooldown: 0.3,
         corpse_energy_ratio: 2.0,
         max_energy: 3.0,
         food_energy: 1.0,
-        projectile_speed: vision_radius * 3.0,
+        projectile_speed: vision_radius * 2.0,
         projectile_range: vision_radius,
         projectile_radius: 3.0,
-        organism_spawn_rate: 17.0,
+        organism_spawn_rate: 20.0,
         food_spawn_rate: 10.0,
-        food_lifetime: 30.0, // 0 = unlimited
+        food_lifetime: 50.0, // 0 = unlimited
         num_genetic_pools: 3,
         pool_interbreed_prob: 0.01, // 5% chance of inter-pool breeding
         brain_type: simulation::brain::BrainType::Transformer,
-        transformer_model_dim: 32,
+        transformer_model_dim: 64,
         transformer_num_blocks: 1,
-        transformer_num_heads: 4,
-        transformer_head_dim: 32,
-        transformer_ff_dim: 64,
+        transformer_num_heads: 8,
+        transformer_head_dim: 8,
+        transformer_ff_dim: 128,
+        use_targeted_mutation: true, // Randomly mutate specific transformer components
         graveyard_size: 60,
         reproduction_energy_multiplier: 0.9,
         unbalanced_pool_sampling: true,
         empty_pool_seed_count: 5,
         velocity_damping: 0.1,
-        elite_pool_size: 20,
-        elite_spawn_probability: 0.2,
-        num_spawn_clusters: 6,
-        cluster_radius: 180.0,
+        elite_pool_size: 30,
+        elite_spawn_probability: 0.1,
+        num_spawn_clusters: 14,
+        cluster_radius: 300.0,
     }
 }
 
@@ -149,20 +150,23 @@ fn find_latest_save_file() -> Option<std::path::PathBuf> {
 fn handle_load_request(
     eco_option: &mut Option<simulation::ecosystem::Ecosystem>,
     ui_state: &mut ui::UIState,
+    params: &simulation::params::Params,
 ) {
     let Some(load_path) = find_latest_save_file() else {
         ui_state.status_message = Some("✗ No save files found".to_string());
         return;
     };
 
-    match simulation::ecosystem::Ecosystem::load_from_file(load_path.to_str().unwrap()) {
+    match simulation::ecosystem::Ecosystem::load_from_file(load_path.to_str().unwrap(), params) {
         Ok(loaded_eco) => {
             let time = loaded_eco.time;
             *eco_option = Some(loaded_eco);
             ui_state.status_message = Some(format!("✓ Loaded from {}", load_path.display()));
             println!("Loaded evolution state from {}", load_path.display());
             // Clear history as it's from a different timeline
-            ui_state.organism_count_history.clear();
+            ui_state.pool_organism_count_histories.clear();
+            ui_state.pool_score_histories.clear();
+            ui_state.pool_age_histories.clear();
             ui_state.food_count_history.clear();
             ui_state.set_last_update_time(time);
             ui_state.reset_plot_time();
@@ -202,7 +206,6 @@ fn update_and_render(
     ui_state.update_history(eco);
     ui_state.update_pool_scores(eco, params);
     ui_state.update_pool_ages(eco, params);
-    ui_state.update_pool_energy_consumption(eco, params);
 
     // Handle organism selection
     handle_organism_selection(eco, params, ui_state);
@@ -280,7 +283,7 @@ async fn main() {
     // Simulation thread
     let params_clone = params.clone();
     thread::spawn(move || {
-        let simulation_fps = 13.0; // Higher base FPS for smoother high-speed simulation
+        let simulation_fps = 16.0; // Higher base FPS for smoother high-speed simulation
         let simulation_dt = 1.0 / simulation_fps;
         let base_frame_time = Duration::from_secs_f32(simulation_dt);
 
@@ -424,7 +427,8 @@ async fn main() {
         if ui_state.load_requested {
             ui_state.load_requested = false;
             let mut eco_lock = ecosystem.write().unwrap();
-            handle_load_request(&mut eco_lock, &mut ui_state);
+            let params_lock = params.lock().unwrap();
+            handle_load_request(&mut eco_lock, &mut ui_state, &params_lock);
         }
 
         // Render at display refresh rate (using read lock for concurrent access)

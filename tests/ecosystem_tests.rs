@@ -62,6 +62,7 @@ fn create_test_params() -> Params {
         transformer_num_heads: 4,
         transformer_head_dim: 16,
         transformer_ff_dim: 128,
+        use_targeted_mutation: false,
         graveyard_size: 400,
         reproduction_energy_multiplier: 1.2,
         reproduction_radius: 15.0,

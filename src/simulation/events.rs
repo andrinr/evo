@@ -179,15 +179,38 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 }
 
                 // Apply score changes to attacker based on whether they hit same pool
+                // and record kill in kill matrix using exponential moving average
                 if let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
                     && let Some(target_pool) = target_pool_id
                 {
                     if attacker.pool_id == target_pool {
                         // Penalty for hitting same pool (friendly fire)
                         // attacker.score -= 1;
+
+                        // Record friendly fire kill in matrix (diagonal) using moving average
+                        if target_killed
+                            && attacker.pool_id < state.kill_matrix.len()
+                            && target_pool < state.kill_matrix[attacker.pool_id].len()
+                        {
+                            // Exponential moving average: new_value = alpha * 1.0 + (1 - alpha) * old_value
+                            // alpha = 0.1 gives a half-life of about 7 kills
+                            const ALPHA: f32 = 0.1;
+                            state.kill_matrix[attacker.pool_id][target_pool] = ALPHA
+                                + (1.0 - ALPHA) * state.kill_matrix[attacker.pool_id][target_pool];
+                        }
                     } else if target_killed {
                         // Reward for killing different pool
                         attacker.score += 1;
+
+                        // Record inter-pool kill in matrix (off-diagonal) using moving average
+                        if attacker.pool_id < state.kill_matrix.len()
+                            && target_pool < state.kill_matrix[attacker.pool_id].len()
+                        {
+                            // Exponential moving average: new_value = alpha * 1.0 + (1 - alpha) * old_value
+                            const ALPHA: f32 = 0.1;
+                            state.kill_matrix[attacker.pool_id][target_pool] = ALPHA
+                                + (1.0 - ALPHA) * state.kill_matrix[attacker.pool_id][target_pool];
+                        }
                     }
                 }
 
@@ -272,23 +295,40 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
 
     // Process energy transfers
     for (giver_id, receiver_id, amount) in energy_transfers {
-        // Find giver and deduct energy
+        // Find giver and deduct energy, also get giver pool
         let mut energy_to_give = 0.0;
+        let mut giver_pool = None;
         if let Some(giver) = state.organisms.iter_mut().find(|o| o.id == giver_id) {
             // Only share if giver has enough energy
             energy_to_give = amount.min(giver.energy * 0.5); // Max 50% of current energy
             giver.consume_energy(energy_to_give);
+            giver_pool = Some(giver.pool_id);
         }
 
-        // Find receiver and add energy
+        // Find receiver and add energy, also get receiver pool
         if energy_to_give > 0.0
             && let Some(receiver) = state.organisms.iter_mut().find(|o| o.id == receiver_id)
         {
+            let receiver_pool = receiver.pool_id;
             receiver.gain_energy(energy_to_give, params.max_energy);
+
             // Add to visualization with timestamp
             state
                 .energy_shares
                 .push((giver_id, receiver_id, state.time));
+
+            // Record in energy sharing matrix using moving average
+            if let Some(giver_pool_id) = giver_pool {
+                if giver_pool_id < state.energy_sharing_matrix.len()
+                    && receiver_pool < state.energy_sharing_matrix[giver_pool_id].len()
+                {
+                    // Exponential moving average: new_value = alpha * 1.0 + (1 - alpha) * old_value
+                    // alpha = 0.1 gives a half-life of about 7 shares
+                    const ALPHA: f32 = 0.1;
+                    state.energy_sharing_matrix[giver_pool_id][receiver_pool] = ALPHA
+                        + (1.0 - ALPHA) * state.energy_sharing_matrix[giver_pool_id][receiver_pool];
+                }
+            }
 
             // Log energy sharing
             state.event_log.log(
@@ -337,7 +377,9 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
 
             // Clone and mutate parent brain
             offspring.brain = parent_brain;
-            offspring.brain.mutate(0.05); // Small mutation for asexual reproduction
+            offspring
+                .brain
+                .mutate_with_params(0.05, params.use_targeted_mutation); // Small mutation for asexual reproduction
 
             // Set offspring properties - offspring gets multiplied energy
             offspring.energy = energy_contribution * params.reproduction_energy_multiplier;

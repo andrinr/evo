@@ -51,7 +51,7 @@ pub struct TimingStats {
 ///
 /// Manages organisms, food, projectiles, and handles all simulation logic including
 /// parallel updates, spatial queries, and evolutionary spawning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Ecosystem {
     /// All living organisms in the simulation.
     pub organisms: Vec<organism::Organism>,
@@ -89,10 +89,52 @@ pub struct Ecosystem {
     /// Spatial cluster centers for food spawning (disjoint from organism clusters)
     #[serde(skip)]
     food_cluster_centers: Vec<Array1<f32>>,
+    /// Kill matrix tracking which pool killed which pool [attacker_pool][victim_pool] = moving average
+    /// Uses exponential moving average with decay to show recent kill patterns
+    #[serde(skip)]
+    pub kill_matrix: Vec<Vec<f32>>,
+    /// Energy sharing matrix tracking which pool shared energy with which pool [giver_pool][receiver_pool] = moving average
+    /// Uses exponential moving average with decay to show recent sharing patterns
+    #[serde(skip)]
+    pub energy_sharing_matrix: Vec<Vec<f32>>,
 }
 
 fn default_evolution_engine() -> EvolutionEngine {
     EvolutionEngine::new(1000, 5)
+}
+
+// Custom Clone implementation optimized for parallel processing snapshots
+// Uses shallow organism clones that skip expensive brain weights (they're never accessed
+// during parallel perception/action queries, only organism positions and signals are needed).
+impl Clone for Ecosystem {
+    fn clone(&self) -> Self {
+        Self {
+            // Shallow clone organisms WITHOUT brain weights (massive performance gain!)
+            organisms: self
+                .organisms
+                .iter()
+                .map(|org| org.clone_shallow())
+                .collect(),
+            food: self.food.clone(),
+            projectiles: self.projectiles.clone(),
+            time: self.time,
+            generation: self.generation,
+
+            // Skip expensive clones that aren't needed for read-only perception
+            // Use default/empty values instead
+            reproduction_stats: ReproductionStats::default(),
+            evolution_engine: EvolutionEngine::new(0, 0), // Empty engine
+            energy_shares: Vec::new(),
+            reproduction_intents: Vec::new(),
+            event_log: EventLog::default(),
+            timing_stats: TimingStats::default(),
+            organism_cluster_centers: Vec::new(),
+            cluster_pool_assignments: Vec::new(),
+            food_cluster_centers: Vec::new(),
+            kill_matrix: Vec::new(),
+            energy_sharing_matrix: Vec::new(),
+        }
+    }
 }
 
 impl Ecosystem {
@@ -112,8 +154,8 @@ impl Ecosystem {
 
         // Minimum distance between organism and food cluster centers
         // Should be at least 2x cluster radius to ensure no overlap
-        let min_separation = params.cluster_radius * 2.5;
-        let margin = params.cluster_radius;
+        let min_separation = params.cluster_radius * 0.5;
+        let margin = params.cluster_radius * 0.5;
 
         // Generate organism clusters first and assign them to pools
         // Distribute clusters evenly across pools
@@ -132,28 +174,28 @@ impl Ecosystem {
             let mut attempts = 0;
             let max_attempts = 100;
 
-            loop {
-                let x = rand::rng().random_range(margin..params.box_width - margin);
-                let y = rand::rng().random_range(margin..params.box_height - margin);
-                let candidate = Array1::from_vec(vec![x, y]);
+            // loop {
+            let x = rand::rng().random_range(margin..params.box_width - margin);
+            let y = rand::rng().random_range(margin..params.box_height - margin);
+            let candidate = Array1::from_vec(vec![x, y]);
 
-                // Check distance to all organism clusters
-                let mut far_enough = true;
-                for org_cluster in &organism_clusters {
-                    let dist = (&candidate - org_cluster).mapv(|x| x.powi(2)).sum().sqrt();
-                    if dist < min_separation {
-                        far_enough = false;
-                        break;
-                    }
-                }
+            // // Check distance to all organism clusters
+            // let mut far_enough = true;
+            // for org_cluster in &organism_clusters {
+            //     let dist = (&candidate - org_cluster).mapv(|x| x.powi(2)).sum().sqrt();
+            //     if dist < min_separation {
+            //         far_enough = false;
+            //         break;
+            //     }
+            // }
 
-                if far_enough || attempts >= max_attempts {
-                    food_clusters.push(candidate);
-                    break;
-                }
+            // if far_enough || attempts >= max_attempts {
+            food_clusters.push(candidate);
+            //     break;
+            // }
 
-                attempts += 1;
-            }
+            attempts += 1;
+            // }
         }
 
         (organism_clusters, pool_assignments, food_clusters)
@@ -266,6 +308,11 @@ impl Ecosystem {
             food.push(food_item);
         }
 
+        // Initialize matrices as num_pools x num_pools matrices of zeros (f32 for moving average)
+        let kill_matrix = vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
+        let energy_sharing_matrix =
+            vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
+
         Self {
             organisms,
             food,
@@ -281,6 +328,8 @@ impl Ecosystem {
             organism_cluster_centers,
             cluster_pool_assignments,
             food_cluster_centers,
+            kill_matrix,
+            energy_sharing_matrix,
         }
     }
 
@@ -302,15 +351,21 @@ impl Ecosystem {
         let spatial_trees = spatial_index.as_trees();
 
         // Create Arc wrapper for shared read-only access
-        // This does ONE clone before parallelization (unavoidable for now due to perception API)
+        // Clone the ecosystem but organisms will be shallow-copied (brains are Arc internally)
         let clone_start = Instant::now();
         let ecosystem_snapshot = Arc::new(self.clone());
         self.timing_stats.ecosystem_clone_ms = clone_start.elapsed().as_secs_f32() * 1000.0;
 
-        // Parallel phase: collect events from each organism without mutex contention
-        // Use larger chunks to reduce cache line bouncing and task switching overhead
+        // Parallel phase: collect events from each organism in parallel
+        // Use chunking to reduce thread synchronization overhead
         let parallel_start = Instant::now();
-        let chunk_size = (self.organisms.len() / rayon::current_num_threads()).max(16);
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = if self.organisms.len() > 0 {
+            (self.organisms.len() / num_threads).max(8)
+        } else {
+            8
+        };
+
         let all_events: Vec<events::SimulationEvent> = self
             .organisms
             .par_chunks_mut(chunk_size)
@@ -478,6 +533,20 @@ impl Ecosystem {
         self.reproduction_intents
             .retain(|(_, _, timestamp)| self.time - timestamp < visualization_lifetime);
 
+        // Apply decay to matrices (exponential moving average decay)
+        // Decay factor chosen so matrix values halve every ~10 seconds of simulation time
+        let decay_factor = 0.5_f32.powf(dt / 10.0);
+        for row in &mut self.kill_matrix {
+            for cell in row {
+                *cell *= decay_factor;
+            }
+        }
+        for row in &mut self.energy_sharing_matrix {
+            for cell in row {
+                *cell *= decay_factor;
+            }
+        }
+
         self.timing_stats.cleanup_ms = cleanup_start.elapsed().as_secs_f32() * 1000.0;
 
         // Update elite pool periodically (every 10 seconds of simulation time)
@@ -607,10 +676,10 @@ impl Ecosystem {
             for _ in 0..total_food_to_spawn {
                 let spawn_pos = Self::random_cluster_position(
                     &self.food_cluster_centers,
-                    params.cluster_radius,
+                    params.cluster_radius * 3.0,
                 );
-                let food_item = food::Food::new_random(&spawn_pos, params.food_energy);
-                // food_item.pos = spawn_pos;
+                let mut food_item = food::Food::new_random(&spawn_pos, params.food_energy);
+                food_item.pos = spawn_pos;
                 self.food.push(food_item);
             }
         }
@@ -624,7 +693,11 @@ impl Ecosystem {
     }
 
     /// Loads an ecosystem state from a JSON file.
-    pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    ///
+    /// # Arguments
+    /// * `path` - Path to the JSON save file
+    /// * `params` - Simulation parameters (needed to reinitialize the evolution engine)
+    pub fn load_from_file(path: &str, params: &Params) -> Result<Self, Box<dyn std::error::Error>> {
         let json = std::fs::read_to_string(path)?;
         let mut ecosystem: Self = serde_json::from_str(&json)?;
 
@@ -634,6 +707,22 @@ impl Ecosystem {
         ecosystem.organism_cluster_centers = Vec::new();
         ecosystem.cluster_pool_assignments = Vec::new();
         ecosystem.food_cluster_centers = Vec::new();
+
+        // Recreate matrices (f32 for moving average)
+        ecosystem.kill_matrix = vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
+        ecosystem.energy_sharing_matrix =
+            vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
+
+        // Recreate evolution engine with correct params
+        // The default_evolution_engine uses hardcoded values (1000, 5)
+        // but we need to use the actual params
+        ecosystem.evolution_engine =
+            EvolutionEngine::new(params.graveyard_size, params.elite_pool_size);
+
+        // Rebuild elite pool from loaded organisms
+        ecosystem
+            .evolution_engine
+            .update_elite_pool(&ecosystem.organisms);
 
         Ok(ecosystem)
     }
@@ -778,7 +867,9 @@ impl Ecosystem {
                             child.age = 0.0;
                             child.score = 0;
                             child.pos = Self::random_spawn_position(&center, params);
-                            child.brain.mutate(0.1); // Mutate to create diversity
+                            child
+                                .brain
+                                .mutate_with_params(0.1, params.use_targeted_mutation); // Mutate to create diversity
 
                             self.generation += 1;
                             self.organisms.push(child);

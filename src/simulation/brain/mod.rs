@@ -3,7 +3,9 @@
 //! Implements both multi-layer perceptron (MLP) and transformer architectures
 //! with support for genetic algorithm operations (mutation and crossover).
 
-use ndarray::Array1;
+use ndarray::{Array1, Array2};
+use ndarray_rand::RandomExt;
+use ndarray_rand::rand_distr::Uniform;
 use serde::{Deserialize, Serialize};
 
 pub mod mlp;
@@ -220,6 +222,114 @@ impl Brain {
                     block.mutate(mutation_scale);
                 }
                 output_proj.mutate(mutation_scale);
+            }
+        }
+    }
+
+    /// Chooses the appropriate mutation strategy based on parameters.
+    /// If use_targeted is true and brain is a transformer, uses targeted mutation.
+    /// Otherwise, uses standard full mutation.
+    pub fn mutate_with_params(&mut self, mutation_scale: f32, use_targeted: bool) {
+        if use_targeted {
+            self.mutate_targeted(mutation_scale);
+        } else {
+            self.mutate(mutation_scale);
+        }
+    }
+
+    /// Mutates the brain using targeted mutations for transformers.
+    /// For transformers: randomly selects a specific component (input embedding,
+    /// a specific block's specific head, feed-forward layers, output projection, or layer norms)
+    /// and mutates only that component with a stronger mutation.
+    /// For MLPs: falls back to standard mutation.
+    pub fn mutate_targeted(&mut self, mutation_scale: f32) {
+        use rand::Rng;
+        let mut rng = rand::rng();
+
+        match self {
+            Brain::MLP { layers } => {
+                // For MLP, just mutate everything (no structure to target)
+                for layer in layers {
+                    layer.mutate(mutation_scale);
+                }
+            }
+            Brain::Transformer {
+                input_embed,
+                blocks,
+                output_proj,
+            } => {
+                // Count total components we can target
+                let num_blocks = blocks.len();
+                let heads_per_block = if num_blocks > 0 {
+                    blocks[0].heads.len()
+                } else {
+                    0
+                };
+
+                // Components: input_embed, output_proj, each block's w_o, each block's ff layers,
+                // each block's layer norms, each head in each block
+                let num_components = 2 // input_embed + output_proj
+                    + num_blocks * 4 // per block: w_o, ff1, ff2, layer_norms
+                    + num_blocks * heads_per_block; // each attention head
+
+                // Randomly select which component to mutate
+                let target = rng.random_range(0..num_components);
+
+                if target == 0 {
+                    // Mutate input embedding
+                    input_embed.mutate(mutation_scale);
+                } else if target == 1 {
+                    // Mutate output projection
+                    output_proj.mutate(mutation_scale);
+                } else {
+                    // Mutate something in the transformer blocks
+                    let block_target = target - 2;
+                    let components_per_block = 4 + heads_per_block;
+                    let block_idx = block_target / components_per_block;
+                    let component_in_block = block_target % components_per_block;
+
+                    if block_idx < blocks.len() {
+                        let block = &mut blocks[block_idx];
+
+                        if component_in_block == 0 {
+                            // Mutate w_o (output projection after multi-head attention)
+                            block.w_o += &Array2::random(
+                                block.w_o.dim(),
+                                Uniform::new(-mutation_scale, mutation_scale),
+                            );
+                        } else if component_in_block == 1 {
+                            // Mutate feed-forward layer 1
+                            block.ff1.mutate(mutation_scale);
+                        } else if component_in_block == 2 {
+                            // Mutate feed-forward layer 2
+                            block.ff2.mutate(mutation_scale);
+                        } else if component_in_block == 3 {
+                            // Mutate layer norms
+                            block.ln1_gain += &Array1::random(
+                                block.ln1_gain.len(),
+                                Uniform::new(-mutation_scale, mutation_scale),
+                            );
+                            block.ln1_bias += &Array1::random(
+                                block.ln1_bias.len(),
+                                Uniform::new(-mutation_scale, mutation_scale),
+                            );
+                            block.ln2_gain += &Array1::random(
+                                block.ln2_gain.len(),
+                                Uniform::new(-mutation_scale, mutation_scale),
+                            );
+                            block.ln2_bias += &Array1::random(
+                                block.ln2_bias.len(),
+                                Uniform::new(-mutation_scale, mutation_scale),
+                            );
+                        } else {
+                            // Mutate a specific attention head
+                            let head_idx = component_in_block - 4;
+                            if head_idx < block.heads.len() {
+                                block.heads[head_idx].mutate(mutation_scale);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -104,6 +104,11 @@ pub struct TransformerBlock {
     pub ln2_gain: Array1<f32>,
     /// Layer norm bias for feed-forward (pre-normalization)
     pub ln2_bias: Array1<f32>,
+    /// Cached total concatenated head output size (num_heads * head_dim)
+    /// Not serialized, recomputed on deserialization
+    #[serde(skip)]
+    #[serde(default)]
+    total_head_dim: usize,
 }
 
 impl TransformerBlock {
@@ -131,17 +136,29 @@ impl TransformerBlock {
             ln1_bias: Array1::zeros(input_dim),
             ln2_gain: Array1::ones(input_dim),
             ln2_bias: Array1::zeros(input_dim),
+            total_head_dim: num_heads * head_dim,
         }
     }
 
     /// Simple layer normalization.
     #[inline]
     fn layer_norm(x: &Array1<f32>, gain: &Array1<f32>, bias: &Array1<f32>) -> Array1<f32> {
-        let mean = x.mean().unwrap_or(0.0);
-        let variance = x.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / x.len() as f32;
-        let std = (variance + 1e-5).sqrt();
+        let n = x.len() as f32;
+        let mean = x.sum() / n;
 
-        ((x - mean) / std) * gain + bias
+        // Compute variance in single pass with mean
+        let mut variance = 0.0;
+        for &val in x.iter() {
+            let diff = val - mean;
+            variance += diff * diff;
+        }
+        variance /= n;
+        let inv_std = 1.0 / (variance + 1e-5).sqrt();
+
+        // Compute normalized output in-place style
+        let mut result = x - mean;
+        result *= inv_std;
+        result * gain + bias
     }
 
     /// Forward pass through transformer block.
@@ -150,8 +167,8 @@ impl TransformerBlock {
         // Multi-head attention with residual
         let normed1 = Self::layer_norm(input, &self.ln1_gain, &self.ln1_bias);
 
-        // Concatenate all head outputs
-        let mut head_outputs = Vec::new();
+        // Concatenate all head outputs - use cached total dimension
+        let mut head_outputs = Vec::with_capacity(self.total_head_dim);
         for head in &self.heads {
             head_outputs.extend(head.forward(&normed1).iter());
         }
@@ -216,6 +233,7 @@ impl TransformerBlock {
             ln1_bias: &parent1.ln1_bias * 0.5 + &parent2.ln1_bias * 0.5,
             ln2_gain: &parent1.ln2_gain * 0.5 + &parent2.ln2_gain * 0.5,
             ln2_bias: &parent1.ln2_bias * 0.5 + &parent2.ln2_bias * 0.5,
+            total_head_dim: parent1.total_head_dim,
         }
     }
 
@@ -242,6 +260,7 @@ impl TransformerBlock {
             ln1_bias: &parent1.ln1_bias * weight1 + &parent2.ln1_bias * weight2,
             ln2_gain: &parent1.ln2_gain * weight1 + &parent2.ln2_gain * weight2,
             ln2_bias: &parent1.ln2_bias * weight1 + &parent2.ln2_bias * weight2,
+            total_head_dim: parent1.total_head_dim,
         }
     }
 }

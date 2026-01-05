@@ -96,6 +96,9 @@ pub struct Params {
     pub transformer_head_dim: usize,
     /// Feed-forward hidden dimension. Typical: 128-256.
     pub transformer_ff_dim: usize,
+    /// Use targeted mutations for transformers (randomly mutates specific components like heads/layers).
+    /// Only affects transformers, not MLPs. Default: false (mutate all parameters).
+    pub use_targeted_mutation: bool,
     /// Maximum number of deceased organisms to keep in graveyard for breeding selection.
     /// Breeding will select fittest organisms from this graveyard instead of living organisms.
     pub graveyard_size: usize,

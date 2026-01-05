@@ -207,7 +207,7 @@ pub fn draw_organisms(
             screen_pos[1],
             scent_radius_screen,
             2.0,
-            Color::from_rgba(100, 100, 100, 100),
+            Color::from_rgba(100, 100, 100, 20),
         );
 
         // Draw scent radius (faint circle)
@@ -217,7 +217,7 @@ pub fn draw_organisms(
             screen_pos[1],
             share_radius_screen,
             2.0,
-            Color::from_rgba(100, 100, 100, 100),
+            Color::from_rgba(100, 100, 100, 20),
         );
 
         // Highlight selected organism with a bright outline
@@ -336,7 +336,7 @@ pub fn draw_organisms(
                 screen_pos[1],
                 end_point[0],
                 end_point[1],
-                3.0,
+                1.0,
                 Color::from_rgba(0, 0, 0, 50), // Semi-transparent black for less visual clutter
             );
         }

@@ -281,7 +281,7 @@ impl EvolutionEngine {
         let seed = &breeding_pool[sorted_indices[pos]];
 
         let mut cloned_brain = seed.brain.clone();
-        cloned_brain.mutate(mutation_scale * 2.0); // Extra mutation for diversity
+        cloned_brain.mutate_with_params(mutation_scale * 2.0, params.use_targeted_mutation); // Extra mutation for diversity
         new_organism.brain = cloned_brain;
         new_organism.dna.clone_from(&seed.dna);
         dna::mutate(&mut new_organism.dna, params.dna_mutation_rate * 2.0);
@@ -303,7 +303,7 @@ impl EvolutionEngine {
         let seed = &breeding_pool[seed_idx];
 
         let mut cloned_brain = seed.brain.clone();
-        cloned_brain.mutate(mutation_scale * 2.0); // Extra mutation for diversity
+        cloned_brain.mutate_with_params(mutation_scale * 2.0, params.use_targeted_mutation); // Extra mutation for diversity
         new_organism.brain = cloned_brain;
         new_organism.dna.clone_from(&seed.dna);
         dna::mutate(&mut new_organism.dna, params.dna_mutation_rate * 2.0);
@@ -368,7 +368,9 @@ impl EvolutionEngine {
 
             // Extra mutation for inter-pool breeding
             if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
-                new_organism.brain.mutate(mutation_scale * 0.5);
+                new_organism
+                    .brain
+                    .mutate_with_params(mutation_scale * 0.5, params.use_targeted_mutation);
             }
         }
     }
@@ -390,7 +392,7 @@ impl EvolutionEngine {
         new_organism.reproduction_method = 1; // asexual
 
         let mut cloned_brain = parent.brain.clone();
-        cloned_brain.mutate(mutation_scale);
+        cloned_brain.mutate_with_params(mutation_scale, params.use_targeted_mutation);
         new_organism.brain = cloned_brain;
 
         // Inherit DNA with mutation
@@ -423,7 +425,7 @@ impl EvolutionEngine {
 
         if candidates.len() >= 2 {
             // Sample from top 50% instead of top 15% for more diversity
-            let top_count = (candidates.len() as f32 * 0.2).max(2.0) as usize;
+            let top_count = (candidates.len() as f32 * 0.15).max(8.0) as usize;
             let top_count = top_count.min(candidates.len());
 
             // Pick two different parents from top 50%
@@ -471,7 +473,9 @@ impl EvolutionEngine {
 
             // Extra mutation for inter-pool breeding
             if !is_same_pool && parent_1.pool_id != parent_2.pool_id {
-                new_organism.brain.mutate(mutation_scale * 0.5);
+                new_organism
+                    .brain
+                    .mutate_with_params(mutation_scale * 0.5, params.use_targeted_mutation);
             }
         }
     }
@@ -486,7 +490,7 @@ impl EvolutionEngine {
         params: &Params,
     ) {
         // Sample from top 50% instead of top 10% for more diversity
-        let top_count = (pool_organisms.len() as f32 * 0.2).max(1.0) as usize;
+        let top_count = (pool_organisms.len() as f32 * 0.15).max(8.0) as usize;
         let parent_pool_pos = rand::rng().random_range(0..top_count.min(pool_organisms.len()));
         let parent_idx = sorted_indices[pool_organisms[parent_pool_pos]];
         let parent = &breeding_pool[parent_idx];
@@ -495,7 +499,7 @@ impl EvolutionEngine {
         new_organism.reproduction_method = 1; // asexual
 
         let mut cloned_brain = parent.brain.clone();
-        cloned_brain.mutate(mutation_scale);
+        cloned_brain.mutate_with_params(mutation_scale, params.use_targeted_mutation);
         new_organism.brain = cloned_brain;
 
         // Inherit DNA with mutation
@@ -517,7 +521,7 @@ impl EvolutionEngine {
         new_organism.reproduction_method = 1; // asexual
 
         let mut cloned_brain = parent.brain.clone();
-        cloned_brain.mutate(mutation_scale);
+        cloned_brain.mutate_with_params(mutation_scale, params.use_targeted_mutation);
         new_organism.brain = cloned_brain;
         new_organism.dna.clone_from(&parent.dna);
         dna::mutate(&mut new_organism.dna, params.dna_mutation_rate);
@@ -554,8 +558,8 @@ impl EvolutionEngine {
 
 /// Samples a mutation scale using logarithmic random distribution.
 fn sample_mutation_scale() -> f32 {
-    let min = 0.000001f32;
-    let max = 0.3f32;
+    let min = 0.001f32;
+    let max = 0.2f32;
     let log_min = min.ln();
     let log_max = max.ln();
     let log_mutation_scale = rand::rng().random_range(log_min..log_max);

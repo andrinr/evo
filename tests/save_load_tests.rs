@@ -62,6 +62,7 @@ fn create_test_params() -> Params {
         transformer_num_heads: 4,
         transformer_head_dim: 16,
         transformer_ff_dim: 128,
+        use_targeted_mutation: false,
         graveyard_size: 400,
         reproduction_energy_multiplier: 1.2,
         reproduction_radius: 15.0,
@@ -93,7 +94,8 @@ fn test_save_and_load() {
         .expect("Failed to save ecosystem");
 
     // Load it back
-    let loaded_ecosystem = Ecosystem::load_from_file(save_path).expect("Failed to load ecosystem");
+    let loaded_ecosystem =
+        Ecosystem::load_from_file(save_path, &params).expect("Failed to load ecosystem");
 
     // Verify the loaded state matches
     assert_eq!(loaded_ecosystem.organisms.len(), ecosystem.organisms.len());
@@ -144,7 +146,8 @@ fn test_save_creates_valid_json() {
 
 #[test]
 fn test_load_nonexistent_file() {
-    let result = Ecosystem::load_from_file("nonexistent_file.json");
+    let params = create_test_params();
+    let result = Ecosystem::load_from_file("nonexistent_file.json", &params);
     assert!(
         result.is_err(),
         "Loading nonexistent file should return an error"
@@ -153,10 +156,11 @@ fn test_load_nonexistent_file() {
 
 #[test]
 fn test_load_invalid_json() {
+    let params = create_test_params();
     let invalid_path = "test_invalid.json";
     fs::write(invalid_path, "{ this is not valid json }").expect("Failed to write test file");
 
-    let result = Ecosystem::load_from_file(invalid_path);
+    let result = Ecosystem::load_from_file(invalid_path, &params);
     assert!(
         result.is_err(),
         "Loading invalid JSON should return an error"
@@ -177,7 +181,7 @@ fn test_save_and_load_preserves_brain_weights() {
     ecosystem.save_to_file(save_path).expect("Failed to save");
 
     // Load
-    let loaded_ecosystem = Ecosystem::load_from_file(save_path).expect("Failed to load");
+    let loaded_ecosystem = Ecosystem::load_from_file(save_path, &params).expect("Failed to load");
 
     // Check that brain weights are preserved (using flattened representation)
     for (original, loaded) in ecosystem
@@ -221,7 +225,8 @@ fn test_load_and_continue_simulation() {
     ecosystem.save_to_file(save_path).expect("Failed to save");
 
     // Load and continue
-    let mut loaded_ecosystem = Ecosystem::load_from_file(save_path).expect("Failed to load");
+    let mut loaded_ecosystem =
+        Ecosystem::load_from_file(save_path, &params).expect("Failed to load");
     let loaded_time = loaded_ecosystem.time;
 
     // Continue simulation

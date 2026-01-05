@@ -242,19 +242,12 @@ pub(super) fn draw_stats_panel(
 
                 ui.separator();
 
-                // Pool age plot
-                if params.num_genetic_pools > 1 {
-                    ui.heading("Average Age Per Pool Over Time");
-                    draw_pool_ages_plot(ui, state, params);
-                    ui.separator();
-                }
-
                 ui.separator();
             }
 
-            // Combined population plot (shown even when no organisms exist)
-            ui.heading("Population Over Time");
-            draw_population_plot(ui, &state.organism_count_history, &state.food_count_history);
+            // Per-pool population plot
+            ui.heading("Population Per Pool Over Time");
+            draw_pool_population_plot(ui, state, params);
 
             ui.separator();
 
@@ -265,11 +258,19 @@ pub(super) fn draw_stats_panel(
                 ui.separator();
             }
 
-            // Pool energy consumption plot
+            // Pool kill heatmap
             if params.num_genetic_pools > 1 {
-                ui.heading("Energy Consumption Per Pool");
-                ui.label("(Solid = Movement, Dashed = Rotation)");
-                draw_pool_energy_consumption_plot(ui, state, params);
+                ui.heading("Inter-Pool Kills");
+                ui.label("(Attacker → Victim)");
+                draw_kill_heatmap(ui, ecosystem);
+                ui.separator();
+            }
+
+            // Pool energy sharing heatmap
+            if params.num_genetic_pools > 1 {
+                ui.heading("Inter-Pool Energy Sharing");
+                ui.label("(Giver → Receiver)");
+                draw_energy_sharing_heatmap(ui, ecosystem);
                 ui.separator();
             }
         });
@@ -367,94 +368,269 @@ fn draw_pool_ages_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
         });
 }
 
-fn draw_pool_energy_consumption_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
-    if state.pool_move_energy_histories.is_empty() {
-        ui.label("Collecting data...");
+fn draw_kill_heatmap(ui: &mut egui::Ui, ecosystem: &simulation::ecosystem::Ecosystem) {
+    if ecosystem.kill_matrix.is_empty() {
+        ui.label("No kill data yet...");
         return;
     }
 
-    Plot::new("pool_energy_consumption_plot")
-        .height(250.0)
-        .show_axes([true, true])
-        .legend(egui_plot::Legend::default())
-        .label_formatter(|name, value| {
-            format!("{}\nTime: {:.1}s\nEnergy/s: {:.5}", name, value.x, value.y)
-        })
-        .show(ui, |plot_ui| {
-            for pool_id in 0..params
-                .num_genetic_pools
-                .min(state.pool_move_energy_histories.len())
-            {
-                // Movement energy line
-                if !state.pool_move_energy_histories[pool_id].is_empty() {
-                    let points: PlotPoints = state.pool_move_energy_histories[pool_id]
-                        .iter()
-                        .map(|&(x, y)| [x, y])
-                        .collect();
+    let num_pools = ecosystem.kill_matrix.len();
+    if num_pools == 0 {
+        return;
+    }
 
-                    let color = get_pool_color(pool_id);
-                    let line = Line::new(points)
-                        .color(color)
-                        .name(format!("Pool {} Movement", pool_id))
-                        .width(2.0);
+    // Find max value for normalization
+    let max_kills = ecosystem
+        .kill_matrix
+        .iter()
+        .flat_map(|row| row.iter())
+        .copied()
+        .fold(0.0_f32, f32::max)
+        .max(0.01); // Avoid division by zero
 
-                    plot_ui.line(line);
+    // Calculate cell size based on available space and number of pools
+    let cell_size = if num_pools <= 4 {
+        40.0
+    } else if num_pools <= 8 {
+        30.0
+    } else {
+        25.0
+    };
+
+    ui.horizontal(|ui| {
+        ui.add_space(cell_size); // Space for row labels
+        ui.vertical(|ui| {
+            // Column labels (Victim)
+            ui.horizontal(|ui| {
+                ui.label("V:");
+                for col in 0..num_pools {
+                    ui.label(
+                        egui::RichText::new(format!("{}", col))
+                            .color(get_pool_color(col))
+                            .size(10.0),
+                    )
+                    .on_hover_text(format!("Victim: Pool {}", col));
+                    if col < num_pools - 1 {
+                        ui.add_space(cell_size - 15.0);
+                    }
                 }
+            });
 
-                // Rotation energy line (dashed)
-                if pool_id < state.pool_rot_energy_histories.len()
-                    && !state.pool_rot_energy_histories[pool_id].is_empty()
-                {
-                    let points: PlotPoints = state.pool_rot_energy_histories[pool_id]
-                        .iter()
-                        .map(|&(x, y)| [x, y])
-                        .collect();
+            // Heatmap grid with row labels
+            ui.horizontal(|ui| {
+                // Row labels (Attacker)
+                ui.vertical(|ui| {
+                    ui.label("A:");
+                    for row in 0..num_pools {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{}", row))
+                                    .color(get_pool_color(row))
+                                    .size(10.0),
+                            )
+                            .on_hover_text(format!("Attacker: Pool {}", row));
+                        });
+                        if row < num_pools - 1 {
+                            ui.add_space(cell_size - 15.0);
+                        }
+                    }
+                });
 
-                    let color = get_pool_color(pool_id);
-                    let line = Line::new(points)
-                        .color(color)
-                        .name(format!("Pool {} Rotation", pool_id))
-                        .width(1.0)
-                        .style(egui_plot::LineStyle::Dashed { length: 10.0 });
+                // Grid
+                ui.vertical(|ui| {
+                    ui.add_space(15.0);
+                    for row in 0..num_pools {
+                        ui.horizontal(|ui| {
+                            for col in 0..num_pools {
+                                let kill_rate = ecosystem.kill_matrix[row][col];
+                                let intensity = (kill_rate / max_kills).min(1.0);
 
-                    plot_ui.line(line);
-                }
-            }
+                                // Color based on intensity (red gradient for all cells)
+                                let base_color = egui::Color32::from_rgb(
+                                    (255.0 * (0.3 + intensity * 0.7)) as u8,
+                                    (50.0 * (1.0 - intensity)) as u8,
+                                    (50.0 * (1.0 - intensity)) as u8,
+                                );
+
+                                // Format display: show value if > 0.01, otherwise show empty
+                                let display_text = if kill_rate > 0.01 {
+                                    format!("{:.1}", kill_rate * 10.0) // Scale by 10 for readability
+                                } else {
+                                    String::new()
+                                };
+
+                                ui.add(
+                                    egui::Button::new(egui::RichText::new(display_text).size(9.0))
+                                        .fill(base_color)
+                                        .min_size(egui::vec2(cell_size - 2.0, cell_size - 2.0)),
+                                )
+                                .on_hover_text(format!(
+                                    "Pool {} → Pool {}: {:.2}",
+                                    row, col, kill_rate
+                                ));
+                            }
+                        });
+                    }
+                });
+            });
         });
+    });
 }
 
-fn draw_population_plot(
-    ui: &mut egui::Ui,
-    organism_data: &VecDeque<(f64, f64)>,
-    food_data: &VecDeque<(f64, f64)>,
-) {
-    if organism_data.is_empty() && food_data.is_empty() {
+fn draw_pool_population_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
+    if state.pool_organism_count_histories.is_empty() {
         ui.label("Collecting data...");
         return;
     }
 
-    Plot::new("population_plot")
-        .height(150.0)
+    Plot::new("pool_population_plot")
+        .height(200.0)
         .show_axes([true, true])
         .legend(egui_plot::Legend::default())
         .label_formatter(|name, value| {
             format!("{}\nTime: {:.1}s\nCount: {:.0}", name, value.x, value.y)
         })
         .show(ui, |plot_ui| {
-            if !organism_data.is_empty() {
-                let org_points: PlotPoints = organism_data.iter().map(|&(x, y)| [x, y]).collect();
-                let org_line = Line::new(org_points)
-                    .color(egui::Color32::from_rgb(100, 150, 255))
-                    .name("Organisms");
-                plot_ui.line(org_line);
+            // Draw per-pool organism counts
+            for pool_id in 0..params
+                .num_genetic_pools
+                .min(state.pool_organism_count_histories.len())
+            {
+                if !state.pool_organism_count_histories[pool_id].is_empty() {
+                    let points: PlotPoints = state.pool_organism_count_histories[pool_id]
+                        .iter()
+                        .map(|&(x, y)| [x, y])
+                        .collect();
+
+                    let color = get_pool_color(pool_id);
+                    let line = Line::new(points)
+                        .color(color)
+                        .name(format!("Pool {}", pool_id));
+
+                    plot_ui.line(line);
+                }
             }
 
-            if !food_data.is_empty() {
-                let food_points: PlotPoints = food_data.iter().map(|&(x, y)| [x, y]).collect();
+            // Draw food count
+            if !state.food_count_history.is_empty() {
+                let food_points: PlotPoints = state
+                    .food_count_history
+                    .iter()
+                    .map(|&(x, y)| [x, y])
+                    .collect();
                 let food_line = Line::new(food_points)
                     .color(egui::Color32::from_rgb(100, 200, 100))
                     .name("Food");
                 plot_ui.line(food_line);
             }
         });
+}
+
+fn draw_energy_sharing_heatmap(ui: &mut egui::Ui, ecosystem: &simulation::ecosystem::Ecosystem) {
+    if ecosystem.energy_sharing_matrix.is_empty() {
+        ui.label("No energy sharing data yet...");
+        return;
+    }
+
+    let num_pools = ecosystem.energy_sharing_matrix.len();
+    if num_pools == 0 {
+        return;
+    }
+
+    // Find max value for normalization
+    let max_sharing = ecosystem
+        .energy_sharing_matrix
+        .iter()
+        .flat_map(|row| row.iter())
+        .copied()
+        .fold(0.0_f32, f32::max)
+        .max(0.01); // Avoid division by zero
+
+    // Calculate cell size based on available space and number of pools
+    let cell_size = if num_pools <= 4 {
+        40.0
+    } else if num_pools <= 8 {
+        30.0
+    } else {
+        25.0
+    };
+
+    ui.horizontal(|ui| {
+        ui.add_space(cell_size); // Space for row labels
+        ui.vertical(|ui| {
+            // Column labels (Receiver)
+            ui.horizontal(|ui| {
+                ui.label("R:");
+                for col in 0..num_pools {
+                    ui.label(
+                        egui::RichText::new(format!("{}", col))
+                            .color(get_pool_color(col))
+                            .size(10.0),
+                    )
+                    .on_hover_text(format!("Receiver: Pool {}", col));
+                    if col < num_pools - 1 {
+                        ui.add_space(cell_size - 15.0);
+                    }
+                }
+            });
+
+            // Heatmap grid with row labels
+            ui.horizontal(|ui| {
+                // Row labels (Giver)
+                ui.vertical(|ui| {
+                    ui.label("G:");
+                    for row in 0..num_pools {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{}", row))
+                                    .color(get_pool_color(row))
+                                    .size(10.0),
+                            )
+                            .on_hover_text(format!("Giver: Pool {}", row));
+                        });
+                        if row < num_pools - 1 {
+                            ui.add_space(cell_size - 15.0);
+                        }
+                    }
+                });
+
+                // Grid
+                ui.vertical(|ui| {
+                    ui.add_space(15.0);
+                    for row in 0..num_pools {
+                        ui.horizontal(|ui| {
+                            for col in 0..num_pools {
+                                let share_rate = ecosystem.energy_sharing_matrix[row][col];
+                                let intensity = (share_rate / max_sharing).min(1.0);
+
+                                // Color based on intensity (green gradient for all cells)
+                                let base_color = egui::Color32::from_rgb(
+                                    (100.0 * (1.0 - intensity)) as u8,
+                                    (255.0 * (0.4 + intensity * 0.6)) as u8,
+                                    (100.0 * (1.0 - intensity)) as u8,
+                                );
+
+                                // Format display: show value if > 0.01, otherwise show empty
+                                let display_text = if share_rate > 0.01 {
+                                    format!("{:.1}", share_rate * 10.0) // Scale by 10 for readability
+                                } else {
+                                    String::new()
+                                };
+
+                                ui.add(
+                                    egui::Button::new(egui::RichText::new(display_text).size(9.0))
+                                        .fill(base_color)
+                                        .min_size(egui::vec2(cell_size - 2.0, cell_size - 2.0)),
+                                )
+                                .on_hover_text(format!(
+                                    "Pool {} → Pool {}: {:.2}",
+                                    row, col, share_rate
+                                ));
+                            }
+                        });
+                    }
+                });
+            });
+        });
+    });
 }

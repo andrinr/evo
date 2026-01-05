@@ -46,6 +46,8 @@ egui-macroquad = { version = "0.17.3", default-features = false }
 egui_plot = "0.31"
 ndarray = { version = "0.16.0", features = ["serde", "rayon"] }
 ndarray-rand = "0.15.0"
+blas-src = { version = "0.10", features = ["openblas"] }
+openblas-src = { version = "0.10", features = ["cblas", "system"] }
 kdtree = "0.7.0"
 geo = "0.30.0"
 rand = "0.9.1"

@@ -69,6 +69,43 @@ pub struct Organism {
 }
 
 impl Organism {
+    /// Creates a shallow clone of the organism without cloning brain weights.
+    /// The brain is replaced with an empty dummy brain with minimal memory allocation.
+    /// This is used for read-only ecosystem snapshots during parallel processing.
+    ///
+    /// # Returns
+    ///
+    /// A clone with all fields except brain. Brain is set to a minimal empty MLP.
+    pub fn clone_shallow(&self) -> Self {
+        // Create minimal empty brain (just one tiny layer) to satisfy type requirements
+        // Use zeros instead of random to avoid any allocation overhead
+        let dummy_brain = brain::Brain::MLP { layers: vec![] };
+
+        Self {
+            id: self.id,
+            age: self.age,
+            score: self.score,
+            pos: self.pos.clone(),
+            vel: self.vel.clone(),
+            rot: self.rot,
+            vision_rot: self.vision_rot,
+            energy: self.energy,
+            signal: self.signal.clone(),
+            memory: self.memory.clone(),
+            brain: dummy_brain, // Dummy brain - never used in parallel queries
+            attack_cooldown: self.attack_cooldown,
+            last_brain_inputs: self.last_brain_inputs.clone(),
+            vision_angles: self.vision_angles.clone(),
+            vision_lengths: self.vision_lengths.clone(),
+            dna: self.dna.clone(),
+            pool_id: self.pool_id,
+            birth_generation: self.birth_generation,
+            reproduction_method: self.reproduction_method,
+            parent_avg_score: self.parent_avg_score,
+            distance_traveled: self.distance_traveled,
+        }
+    }
+
     /// Creates a new organism with random position, rotation, and brain weights.
     ///
     /// # Arguments
