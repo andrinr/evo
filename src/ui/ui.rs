@@ -25,6 +25,11 @@ pub struct UIState {
     plot_time_counter: f64,
     pub last_step_time_ms: f32,
     pub actual_steps_per_sec: f32,
+    /// Camera zoom level (1.0 = normal, 2.0 = 2x zoomed in)
+    pub camera_zoom: f32,
+    /// Camera offset in simulation coordinates (center point of view)
+    pub camera_offset_x: f32,
+    pub camera_offset_y: f32,
 }
 
 impl UIState {
@@ -48,6 +53,9 @@ impl UIState {
             plot_time_counter: 0.0,
             last_step_time_ms: 0.0,
             actual_steps_per_sec: 0.0,
+            camera_zoom: 1.0,
+            camera_offset_x: 0.0,
+            camera_offset_y: 0.0,
         }
     }
 
@@ -59,21 +67,35 @@ impl UIState {
         self.plot_time_counter = 0.0;
     }
 
-    pub fn update_history(&mut self, ecosystem: &simulation::ecosystem::Ecosystem) {
-        if ecosystem.time - self.last_update_time >= self.update_interval {
-            self.last_update_time = ecosystem.time;
-
-            // Track food count
-            self.food_count_history
-                .push_back((ecosystem.time as f64, ecosystem.food.len() as f64));
-
-            if self.food_count_history.len() > MAX_HISTORY_POINTS {
-                self.food_count_history.pop_front();
-            }
+    pub fn update_history(
+        &mut self,
+        ecosystem: &simulation::ecosystem::Ecosystem,
+        params: &Params,
+    ) {
+        // Check if it's time to update all histories
+        if ecosystem.time - self.last_update_time < self.update_interval {
+            return;
         }
+
+        // Update the last update time once for all histories
+        self.last_update_time = ecosystem.time;
+
+        // Track food count
+        self.food_count_history
+            .push_back((ecosystem.time as f64, ecosystem.food.len() as f64));
+
+        if self.food_count_history.len() > MAX_HISTORY_POINTS {
+            self.food_count_history.pop_front();
+        }
+
+        // Update pool scores and counts
+        self.update_pool_scores_internal(ecosystem, params);
+
+        // Update pool ages
+        self.update_pool_ages_internal(ecosystem, params);
     }
 
-    pub fn update_pool_scores(
+    fn update_pool_scores_internal(
         &mut self,
         ecosystem: &simulation::ecosystem::Ecosystem,
         params: &Params,
@@ -114,7 +136,7 @@ impl UIState {
         }
     }
 
-    pub fn update_pool_ages(
+    fn update_pool_ages_internal(
         &mut self,
         ecosystem: &simulation::ecosystem::Ecosystem,
         params: &Params,
@@ -169,20 +191,22 @@ pub fn draw_ui(
         // Events panel - show recent events
         super::events::draw_events_panel(egui_ctx, ecosystem);
 
-        // Detail panel - show selected organism, or hovered if nothing selected
+        // Detail panel - always show, display selected organism, or hovered if nothing selected
         let display_id = state.selected_organism_id.or(state.hovered_organism_id);
-        if let Some(org_id) = display_id {
-            if let Some(organism) = ecosystem.organisms.iter().find(|o| o.id == org_id) {
-                super::organisms::draw_organism_detail_panel(
-                    egui_ctx,
-                    organism,
-                    params,
-                    state.selected_organism_id.is_some(),
-                );
-            } else if state.selected_organism_id == Some(org_id) {
-                // Selected organism died, clear selection
-                state.selected_organism_id = None;
-            }
+
+        // Always show the panel
+        super::organisms::draw_organism_detail_panel(
+            egui_ctx,
+            display_id.and_then(|org_id| ecosystem.organisms.iter().find(|o| o.id == org_id)),
+            params,
+            state.selected_organism_id.is_some(),
+        );
+
+        // Clear selection if selected organism died
+        if let Some(selected_id) = state.selected_organism_id
+            && !ecosystem.organisms.iter().any(|o| o.id == selected_id)
+        {
+            state.selected_organism_id = None;
         }
     });
 }

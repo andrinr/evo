@@ -60,7 +60,7 @@ fn create_simulation_params() -> Params {
         signal_size,
         memory_size,
         n_organism: 90,
-        max_organism: 250,
+        max_organism: 400,
         n_food: 150,
         max_food: 500,
         box_width: 1800.0,
@@ -78,7 +78,7 @@ fn create_simulation_params() -> Params {
         organism_spawn_rate: 20.0,
         food_spawn_rate: 10.0,
         food_lifetime: 50.0, // 0 = unlimited
-        num_genetic_pools: 3,
+        num_genetic_pools: 2,
         pool_interbreed_prob: 0.01, // 5% chance of inter-pool breeding
         brain_type: simulation::brain::BrainType::Transformer,
         transformer_model_dim: 64,
@@ -96,6 +96,8 @@ fn create_simulation_params() -> Params {
         elite_spawn_probability: 0.1,
         num_spawn_clusters: 14,
         cluster_radius: 300.0,
+        food_cluster_drift_speed: 8.0, // Food clusters drift slowly across the screen
+        organism_cluster_drift_speed: 4.0, // Spawn points drift, creating population migrations
     }
 }
 
@@ -183,9 +185,14 @@ fn handle_organism_selection(
     params: &Params,
     ui_state: &mut ui::UIState,
 ) {
-    if let Some(clicked_id) =
-        graphics::handle_organism_click(eco, params, ui_state.stats_panel_width)
-    {
+    if let Some(clicked_id) = graphics::handle_organism_click(
+        eco,
+        params,
+        ui_state.stats_panel_width,
+        ui_state.camera_zoom,
+        ui_state.camera_offset_x,
+        ui_state.camera_offset_y,
+    ) {
         // Toggle selection: if clicking the same organism, deselect it
         if ui_state.selected_organism_id == Some(clicked_id) {
             ui_state.selected_organism_id = None;
@@ -202,10 +209,8 @@ fn update_and_render(
 ) {
     handle_keyboard_shortcuts(ui_state);
 
-    // Update history data
-    ui_state.update_history(eco);
-    ui_state.update_pool_scores(eco, params);
-    ui_state.update_pool_ages(eco, params);
+    // Update history data (all histories updated together at same interval)
+    ui_state.update_history(eco, params);
 
     // Handle organism selection
     handle_organism_selection(eco, params, ui_state);
@@ -225,16 +230,48 @@ fn update_and_render(
 
     // Update hovered organism (only if rendering enabled)
     if ui_state.rendering_enabled {
-        ui_state.hovered_organism_id =
-            graphics::get_hovered_organism(eco, params, ui_state.stats_panel_width);
+        // Handle camera zoom controls
+        graphics::handle_camera_zoom(
+            &mut ui_state.camera_zoom,
+            &mut ui_state.camera_offset_x,
+            &mut ui_state.camera_offset_y,
+            params,
+            ui_state.stats_panel_width,
+        );
+
+        ui_state.hovered_organism_id = graphics::get_hovered_organism(
+            eco,
+            params,
+            ui_state.stats_panel_width,
+            ui_state.camera_zoom,
+            ui_state.camera_offset_x,
+            ui_state.camera_offset_y,
+        );
 
         // Draw simulation
-        graphics::draw_food(eco, params, ui_state.stats_panel_width);
-        graphics::draw_projectiles(eco, params, ui_state.stats_panel_width);
+        graphics::draw_food(
+            eco,
+            params,
+            ui_state.stats_panel_width,
+            ui_state.camera_zoom,
+            ui_state.camera_offset_x,
+            ui_state.camera_offset_y,
+        );
+        graphics::draw_projectiles(
+            eco,
+            params,
+            ui_state.stats_panel_width,
+            ui_state.camera_zoom,
+            ui_state.camera_offset_x,
+            ui_state.camera_offset_y,
+        );
         graphics::draw_interactions(
             eco,
             params,
             ui_state.stats_panel_width,
+            ui_state.camera_zoom,
+            ui_state.camera_offset_x,
+            ui_state.camera_offset_y,
             &eco.energy_shares,
             &eco.reproduction_intents,
         );
@@ -242,6 +279,9 @@ fn update_and_render(
             eco,
             params,
             ui_state.stats_panel_width,
+            ui_state.camera_zoom,
+            ui_state.camera_offset_x,
+            ui_state.camera_offset_y,
             ui_state.selected_organism_id,
         );
     }

@@ -127,4 +127,12 @@ pub struct Params {
     /// Radius of each spawn cluster (in simulation units).
     /// Default: 100.0. Range: 50.0-300.0.
     pub cluster_radius: f32,
+    /// Drift speed for food clusters (pixels per second).
+    /// Food clusters slowly move across the screen, creating dynamic foraging challenges.
+    /// Default: 5.0. Range: 0.0-20.0 (0.0 = static clusters).
+    pub food_cluster_drift_speed: f32,
+    /// Drift speed for organism spawn clusters (pixels per second).
+    /// Organism spawn locations slowly migrate across the screen, creating population movements.
+    /// Default: 3.0. Range: 0.0-15.0 (0.0 = static spawning, slower than food to avoid chaos).
+    pub organism_cluster_drift_speed: f32,
 }

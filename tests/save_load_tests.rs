@@ -73,6 +73,8 @@ fn create_test_params() -> Params {
         elite_spawn_probability: 0.1,
         num_spawn_clusters: 3,
         cluster_radius: 100.0,
+        food_cluster_drift_speed: 5.0,
+        organism_cluster_drift_speed: 3.0,
     }
 }
 

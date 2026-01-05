@@ -4,24 +4,36 @@ use egui_macroquad::egui;
 
 pub(super) fn draw_organism_detail_panel(
     egui_ctx: &egui::Context,
-    organism: &simulation::organism::Organism,
+    organism: Option<&simulation::organism::Organism>,
     params: &Params,
     is_selected: bool,
 ) {
-    let title = if is_selected {
-        format!("Organism #{} [SELECTED]", organism.id)
-    } else {
-        format!("Organism #{} (hover)", organism.id)
-    };
-
-    egui::Window::new(title)
+    // Use a fixed ID so the window state (position, size, open/closed) is preserved
+    egui::Window::new("Organism Details")
+        .id(egui::Id::new("organism_detail_panel"))
         .default_pos([20.0, 20.0])
         .resizable(true)
         .show(egui_ctx, |ui| {
-            if is_selected {
-                ui.label("Click elsewhere to deselect");
+            // Show organism ID and status in the content area
+            if let Some(org) = organism {
+                let status = if is_selected { "[SELECTED]" } else { "(hover)" };
+                ui.heading(format!("Organism #{} {}", org.id, status));
                 ui.separator();
+
+                if is_selected {
+                    ui.label("Click elsewhere to deselect");
+                    ui.separator();
+                }
+            } else {
+                ui.heading("No organism selected");
+                ui.separator();
+                ui.label("Click on an organism to select it");
+                ui.label("or hover over one to view details");
+                return;
             }
+
+            // Use the organism for the rest of the function
+            let organism = organism.unwrap();
             ui.label(format!("Age: {:.2}", organism.age));
             ui.label(format!("Energy: {:.3}", organism.energy));
             ui.label(format!("Score: {}", organism.score));

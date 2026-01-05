@@ -83,12 +83,18 @@ pub struct Ecosystem {
     /// Spatial cluster centers for organism spawning
     #[serde(skip)]
     organism_cluster_centers: Vec<Array1<f32>>,
+    /// Velocity vectors for organism cluster drift (same length as `organism_cluster_centers`)
+    #[serde(skip)]
+    organism_cluster_velocities: Vec<Array1<f32>>,
     /// Pool assignment for each organism cluster (same length as `organism_cluster_centers`)
     #[serde(skip)]
     cluster_pool_assignments: Vec<usize>,
     /// Spatial cluster centers for food spawning (disjoint from organism clusters)
     #[serde(skip)]
     food_cluster_centers: Vec<Array1<f32>>,
+    /// Velocity vectors for food cluster drift (same length as `food_cluster_centers`)
+    #[serde(skip)]
+    food_cluster_velocities: Vec<Array1<f32>>,
     /// Kill matrix tracking which pool killed which pool [attacker_pool][victim_pool] = moving average
     /// Uses exponential moving average with decay to show recent kill patterns
     #[serde(skip)]
@@ -129,8 +135,10 @@ impl Clone for Ecosystem {
             event_log: EventLog::default(),
             timing_stats: TimingStats::default(),
             organism_cluster_centers: Vec::new(),
+            organism_cluster_velocities: Vec::new(),
             cluster_pool_assignments: Vec::new(),
             food_cluster_centers: Vec::new(),
+            food_cluster_velocities: Vec::new(),
             kill_matrix: Vec::new(),
             energy_sharing_matrix: Vec::new(),
         }
@@ -218,6 +226,21 @@ impl Ecosystem {
             cluster_center[0] + offset_x,
             cluster_center[1] + offset_y,
         ])
+    }
+
+    /// Wraps a position around the simulation bounds in place
+    fn wrap_position(pos: &mut Array1<f32>, box_width: f32, box_height: f32) {
+        if pos[0] < 0.0 {
+            pos[0] += box_width;
+        } else if pos[0] >= box_width {
+            pos[0] -= box_width;
+        }
+
+        if pos[1] < 0.0 {
+            pos[1] += box_height;
+        } else if pos[1] >= box_height {
+            pos[1] -= box_height;
+        }
     }
 
     /// Generates a random position within a cluster belonging to a specific pool
@@ -313,6 +336,26 @@ impl Ecosystem {
         let energy_sharing_matrix =
             vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
 
+        // Initialize random velocities for organism cluster drift
+        let organism_cluster_velocities = organism_cluster_centers
+            .iter()
+            .map(|_| {
+                let angle = rand::rng().random::<f32>() * std::f32::consts::TAU;
+                let speed = params.organism_cluster_drift_speed;
+                Array1::from_vec(vec![angle.cos() * speed, angle.sin() * speed])
+            })
+            .collect();
+
+        // Initialize random velocities for food cluster drift
+        let food_cluster_velocities = food_cluster_centers
+            .iter()
+            .map(|_| {
+                let angle = rand::rng().random::<f32>() * std::f32::consts::TAU;
+                let speed = params.food_cluster_drift_speed;
+                Array1::from_vec(vec![angle.cos() * speed, angle.sin() * speed])
+            })
+            .collect();
+
         Self {
             organisms,
             food,
@@ -326,8 +369,10 @@ impl Ecosystem {
             event_log: EventLog::default(),
             timing_stats: TimingStats::default(),
             organism_cluster_centers,
+            organism_cluster_velocities,
             cluster_pool_assignments,
             food_cluster_centers,
+            food_cluster_velocities,
             kill_matrix,
             energy_sharing_matrix,
         }
@@ -549,6 +594,30 @@ impl Ecosystem {
 
         self.timing_stats.cleanup_ms = cleanup_start.elapsed().as_secs_f32() * 1000.0;
 
+        // Update organism cluster positions (drift across screen with wraparound)
+        for (center, velocity) in self
+            .organism_cluster_centers
+            .iter_mut()
+            .zip(self.organism_cluster_velocities.iter())
+        {
+            *center = center.clone() + velocity * dt;
+
+            // Wrap around screen edges
+            wrap_around_mut(center, params.box_width, params.box_height);
+        }
+
+        // Update food cluster positions (drift across screen with wraparound)
+        for (center, velocity) in self
+            .food_cluster_centers
+            .iter_mut()
+            .zip(self.food_cluster_velocities.iter())
+        {
+            *center = center.clone() + velocity * dt;
+
+            // Wrap around screen edges
+            wrap_around_mut(center, params.box_width, params.box_height);
+        }
+
         // Update elite pool periodically (every 10 seconds of simulation time)
         if (self.time % 10.0) < dt {
             self.evolution_engine.update_elite_pool(&self.organisms);
@@ -570,6 +639,28 @@ impl Ecosystem {
             self.organism_cluster_centers = org_clusters;
             self.cluster_pool_assignments = pool_assignments;
             self.food_cluster_centers = food_clusters;
+
+            // Initialize random velocities for organism cluster drift
+            self.organism_cluster_velocities = self
+                .organism_cluster_centers
+                .iter()
+                .map(|_| {
+                    let angle = rand::rng().random::<f32>() * std::f32::consts::TAU;
+                    let speed = params.organism_cluster_drift_speed;
+                    Array1::from_vec(vec![angle.cos() * speed, angle.sin() * speed])
+                })
+                .collect();
+
+            // Initialize random velocities for food cluster drift
+            self.food_cluster_velocities = self
+                .food_cluster_centers
+                .iter()
+                .map(|_| {
+                    let angle = rand::rng().random::<f32>() * std::f32::consts::TAU;
+                    let speed = params.food_cluster_drift_speed;
+                    Array1::from_vec(vec![angle.cos() * speed, angle.sin() * speed])
+                })
+                .collect();
         }
 
         // Automatic asexual reproduction from living organisms and elite pool
@@ -601,12 +692,14 @@ impl Ecosystem {
             };
 
             // Generate position in a cluster belonging to the target pool
-            let spawn_pos = Self::random_pool_cluster_position(
+            let mut spawn_pos = Self::random_pool_cluster_position(
                 &self.organism_cluster_centers,
                 &self.cluster_pool_assignments,
                 target_pool_id,
                 params.cluster_radius,
             );
+            // Ensure organism spawn position is within bounds
+            Self::wrap_position(&mut spawn_pos, params.box_width, params.box_height);
 
             // Decide which breeding pool to use
             let roll = rand::rng().random::<f32>();
@@ -674,10 +767,13 @@ impl Ecosystem {
             let total_food_to_spawn = (base_spawn + extra).min(max_allowed_food);
 
             for _ in 0..total_food_to_spawn {
-                let spawn_pos = Self::random_cluster_position(
+                let mut spawn_pos = Self::random_cluster_position(
                     &self.food_cluster_centers,
-                    params.cluster_radius * 3.0,
+                    params.cluster_radius * 1.5,
                 );
+                // Ensure food position is within bounds
+                Self::wrap_position(&mut spawn_pos, params.box_width, params.box_height);
+
                 let mut food_item = food::Food::new_random(&spawn_pos, params.food_energy);
                 food_item.pos = spawn_pos;
                 self.food.push(food_item);
@@ -705,8 +801,10 @@ impl Ecosystem {
         // They will be empty after deserialization and need to be regenerated
         // This will happen automatically on the first spawn() call
         ecosystem.organism_cluster_centers = Vec::new();
+        ecosystem.organism_cluster_velocities = Vec::new();
         ecosystem.cluster_pool_assignments = Vec::new();
         ecosystem.food_cluster_centers = Vec::new();
+        ecosystem.food_cluster_velocities = Vec::new();
 
         // Recreate matrices (f32 for moving average)
         ecosystem.kill_matrix = vec![vec![0.0; params.num_genetic_pools]; params.num_genetic_pools];
