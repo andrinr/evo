@@ -104,22 +104,6 @@ pub(super) fn draw_stats_panel(
                 params.n_organism
             ));
             ui.label(format!("Food: {}/{}", ecosystem.food.len(), params.n_food));
-            ui.label(format!(
-                "Graveyard: {}/{}",
-                ecosystem.graveyard().len(),
-                params.graveyard_size
-            ));
-
-            // Show top graveyard fitness (what's being selected for breeding)
-            if !ecosystem.graveyard().is_empty() {
-                let top_fitness = ecosystem.graveyard()[0].fitness();
-                let top_age = ecosystem.graveyard()[0].age;
-                let top_score = ecosystem.graveyard()[0].score;
-                ui.label(format!(
-                    "Top Graveyard: fitness={:.1} (age={:.1}, score={})",
-                    top_fitness, top_age, top_score
-                ));
-            }
 
             // Show pool populations
             if params.num_genetic_pools > 1 {
@@ -222,7 +206,7 @@ pub(super) fn draw_stats_panel(
                 ui.separator();
                 ui.label("Other");
                 ui.add(
-                    egui::Slider::new(&mut params.corpse_energy_ratio, 0.0..=1.0)
+                    egui::Slider::new(&mut params.corpse_energy_ratio, 0.0..=4.0)
                         .text("Corpse Energy"),
                 );
             });
@@ -278,6 +262,14 @@ pub(super) fn draw_stats_panel(
             if params.num_genetic_pools > 1 {
                 ui.heading("Average Score Per Pool Over Time");
                 draw_pool_scores_plot(ui, state, params);
+                ui.separator();
+            }
+
+            // Pool energy consumption plot
+            if params.num_genetic_pools > 1 {
+                ui.heading("Energy Consumption Per Pool");
+                ui.label("(Solid = Movement, Dashed = Rotation)");
+                draw_pool_energy_consumption_plot(ui, state, params);
                 ui.separator();
             }
         });
@@ -368,6 +360,62 @@ fn draw_pool_ages_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
                     let line = Line::new(points)
                         .color(color)
                         .name(format!("Pool {}", pool_id));
+
+                    plot_ui.line(line);
+                }
+            }
+        });
+}
+
+fn draw_pool_energy_consumption_plot(ui: &mut egui::Ui, state: &UIState, params: &Params) {
+    if state.pool_move_energy_histories.is_empty() {
+        ui.label("Collecting data...");
+        return;
+    }
+
+    Plot::new("pool_energy_consumption_plot")
+        .height(250.0)
+        .show_axes([true, true])
+        .legend(egui_plot::Legend::default())
+        .label_formatter(|name, value| {
+            format!("{}\nTime: {:.1}s\nEnergy/s: {:.5}", name, value.x, value.y)
+        })
+        .show(ui, |plot_ui| {
+            for pool_id in 0..params
+                .num_genetic_pools
+                .min(state.pool_move_energy_histories.len())
+            {
+                // Movement energy line
+                if !state.pool_move_energy_histories[pool_id].is_empty() {
+                    let points: PlotPoints = state.pool_move_energy_histories[pool_id]
+                        .iter()
+                        .map(|&(x, y)| [x, y])
+                        .collect();
+
+                    let color = get_pool_color(pool_id);
+                    let line = Line::new(points)
+                        .color(color)
+                        .name(format!("Pool {} Movement", pool_id))
+                        .width(2.0);
+
+                    plot_ui.line(line);
+                }
+
+                // Rotation energy line (dashed)
+                if pool_id < state.pool_rot_energy_histories.len()
+                    && !state.pool_rot_energy_histories[pool_id].is_empty()
+                {
+                    let points: PlotPoints = state.pool_rot_energy_histories[pool_id]
+                        .iter()
+                        .map(|&(x, y)| [x, y])
+                        .collect();
+
+                    let color = get_pool_color(pool_id);
+                    let line = Line::new(points)
+                        .color(color)
+                        .name(format!("Pool {} Rotation", pool_id))
+                        .width(1.0)
+                        .style(egui_plot::LineStyle::Dashed { length: 10.0 });
 
                     plot_ui.line(line);
                 }

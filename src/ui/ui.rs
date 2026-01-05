@@ -15,6 +15,8 @@ pub struct UIState {
     pub food_count_history: VecDeque<(f64, f64)>,
     pub pool_score_histories: Vec<VecDeque<(f64, f64)>>, // One history per pool
     pub pool_age_histories: Vec<VecDeque<(f64, f64)>>,   // Average age per pool
+    pub pool_move_energy_histories: Vec<VecDeque<(f64, f64)>>, // Total movement energy loss rate per pool
+    pub pool_rot_energy_histories: Vec<VecDeque<(f64, f64)>>, // Total rotation energy loss rate per pool
     last_update_time: f32,
     update_interval: f32,
     pub save_requested: bool,
@@ -39,6 +41,8 @@ impl UIState {
             food_count_history: VecDeque::new(),
             pool_score_histories: Vec::new(),
             pool_age_histories: Vec::new(),
+            pool_move_energy_histories: Vec::new(),
+            pool_rot_energy_histories: Vec::new(),
             last_update_time: 0.0,
             update_interval: 0.5, // Update every 0.5 seconds
             save_requested: false,
@@ -154,6 +158,56 @@ impl UIState {
 
             if self.pool_age_histories[pool_id].len() > MAX_HISTORY_POINTS {
                 self.pool_age_histories[pool_id].pop_front();
+            }
+        }
+    }
+
+    pub fn update_pool_energy_consumption(
+        &mut self,
+        ecosystem: &simulation::ecosystem::Ecosystem,
+        params: &Params,
+    ) {
+        // Ensure we have enough histories for all pools
+        while self.pool_move_energy_histories.len() < params.num_genetic_pools {
+            self.pool_move_energy_histories.push(VecDeque::new());
+        }
+        while self.pool_rot_energy_histories.len() < params.num_genetic_pools {
+            self.pool_rot_energy_histories.push(VecDeque::new());
+        }
+
+        // Calculate total energy consumption rates for each pool
+        for pool_id in 0..params.num_genetic_pools {
+            let pool_organisms: Vec<&simulation::organism::Organism> = ecosystem
+                .organisms
+                .iter()
+                .filter(|org| org.pool_id == pool_id)
+                .collect();
+
+            // Total movement energy loss rate (energy per second)
+            let total_move_energy: f32 = pool_organisms
+                .iter()
+                .map(|o| {
+                    let velocity_mag = (o.vel[0].powi(2) + o.vel[1].powi(2)).sqrt();
+                    velocity_mag * params.move_energy_rate
+                })
+                .sum();
+
+            // Total rotation energy loss rate (energy per second)
+            let total_rot_energy: f32 = pool_organisms
+                .iter()
+                .map(|o| o.rot.abs() * params.rot_energy_rate)
+                .sum();
+
+            self.pool_move_energy_histories[pool_id]
+                .push_back((ecosystem.time as f64, total_move_energy as f64));
+            self.pool_rot_energy_histories[pool_id]
+                .push_back((ecosystem.time as f64, total_rot_energy as f64));
+
+            if self.pool_move_energy_histories[pool_id].len() > MAX_HISTORY_POINTS {
+                self.pool_move_energy_histories[pool_id].pop_front();
+            }
+            if self.pool_rot_energy_histories[pool_id].len() > MAX_HISTORY_POINTS {
+                self.pool_rot_energy_histories[pool_id].pop_front();
             }
         }
     }

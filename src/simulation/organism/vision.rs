@@ -145,6 +145,7 @@ impl Sense for Vision {
         for (i, vision_vector) in vision_vectors.iter().enumerate() {
             let end_point = &organism.pos + vision_vector;
             let mut min_distance = f32::MAX;
+            let ray_length = organism.vision_lengths[i];
 
             // Check organisms
             for (_, neighbor_id) in &neighbors_orgs {
@@ -159,14 +160,14 @@ impl Sense for Vision {
                     min_distance = distance;
                     let base_idx = 3 * i;
                     // Invert distance: closer = higher value
-                    // Use vision_radius as max distance for normalization
-                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    // Use this ray's specific length for normalization
+                    let proximity = 1.0 - (distance / ray_length).min(1.0);
                     vision_outputs[base_idx] = proximity;
                     // Pool match: 1.0 if same pool, 0.0 if different pool
                     vision_outputs[base_idx + 1] = if neighbor_org.pool_id == organism.pool_id {
                         1.0
                     } else {
-                        0.0
+                        -1.0
                     };
                     // Is organism: 1.0 for organisms
                     vision_outputs[base_idx + 2] = 1.0;
@@ -181,7 +182,7 @@ impl Sense for Vision {
                     min_distance = distance;
                     let base_idx = 3 * i;
                     // Invert distance: closer = higher value
-                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    let proximity = 1.0 - (distance / ray_length).min(1.0);
                     vision_outputs[base_idx] = proximity;
                     vision_outputs[base_idx + 1] = 0.0; // no pool match for food
                     vision_outputs[base_idx + 2] = 0.0; // is_organism = 0 for food
@@ -203,7 +204,7 @@ impl Sense for Vision {
                     min_distance = distance;
                     let base_idx = 3 * i;
                     // Invert distance: closer = higher value
-                    let proximity = 1.0 - (distance / params.vision_radius).min(1.0);
+                    let proximity = 1.0 - (distance / ray_length).min(1.0);
                     vision_outputs[base_idx] = proximity;
                     vision_outputs[base_idx + 1] = 0.0; // no pool match for projectiles
                     vision_outputs[base_idx + 2] = -1.0; // special marker for projectiles

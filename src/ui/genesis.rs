@@ -48,16 +48,6 @@ pub fn draw_genesis_screen(params: &mut Params) -> bool {
                         egui::Slider::new(&mut params.pool_interbreed_prob, 0.0..=1.0)
                             .text("Inter-Pool Breeding Prob"),
                     );
-                    ui.add(
-                        egui::Slider::new(&mut params.graveyard_size, 50..=1000)
-                            .text("Graveyard Size (breeding pool)"),
-                    );
-
-                    ui.checkbox(
-                        &mut params.spawn_from_graveyard,
-                        "Spawn from Graveyard (vs Living)",
-                    );
-                    ui.label("If checked: Evolution (graveyard). If unchecked: Cloning (living)");
 
                     ui.checkbox(
                         &mut params.unbalanced_pool_sampling,

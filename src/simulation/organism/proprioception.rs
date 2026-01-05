@@ -15,9 +15,9 @@ use super::sense::Sense;
 /// Outputs:
 /// - Memory state (all memory cells)
 /// - Energy level (normalized)
-/// - Rotation (sin and cos components for continuous encoding)
 /// - Position encoding (sin and cos of normalized x and y coordinates)
-/// - Velocity (x and y components)
+/// - Vision offset (sin and cos of where organism is looking relative to movement direction)
+/// - Time encoding (sin and cos of simulation time for periodic awareness)
 pub struct Proprioception;
 
 impl Proprioception {
@@ -42,7 +42,7 @@ impl Sense for Proprioception {
         _trees: Option<&super::super::ecosystem::SpatialTrees>,
     ) -> Array1<f32> {
         let memory_size = organism.memory.len();
-        // memory + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) + velocity(x,y) = memory_size + 9
+        // memory + energy + position(sin_x, cos_x, sin_y, cos_y) + vision_offset(sin, cos) + time(sin, cos) = memory_size + 9
         let mut proprio_outputs = Array1::zeros(memory_size + 9);
 
         let mut idx = 0;
@@ -55,12 +55,6 @@ impl Sense for Proprioception {
 
         // Add energy level (already normalized)
         proprio_outputs[idx] = organism.energy;
-        idx += 1;
-
-        // Add rotation awareness (sin and cos for continuous encoding)
-        proprio_outputs[idx] = organism.rot.sin();
-        idx += 1;
-        proprio_outputs[idx] = organism.rot.cos();
         idx += 1;
 
         // Add positional encoding using sine and cosine
@@ -77,16 +71,27 @@ impl Sense for Proprioception {
         proprio_outputs[idx] = norm_y.cos();
         idx += 1;
 
-        // Add velocity (x and y components)
-        proprio_outputs[idx] = organism.vel[0];
+        // Add vision offset (difference between vision and movement direction) using sin/cos encoding
+        // Since vision_rot is now relative to body rotation (vision_rot = rot + offset),
+        // this gives the organism awareness of where it's looking relative to where it's moving
+        let vision_offset = organism.vision_rot - organism.rot;
+        proprio_outputs[idx] = vision_offset.sin();
         idx += 1;
-        proprio_outputs[idx] = organism.vel[1];
+        proprio_outputs[idx] = vision_offset.cos();
+        idx += 1;
+
+        // Add time encoding using sine and cosine with a period of 100 seconds
+        // This gives organisms awareness of cyclical time patterns
+        let time_phase = (organism.age / 1.0) * 2.0 * std::f32::consts::PI;
+        proprio_outputs[idx] = time_phase.sin();
+        idx += 1;
+        proprio_outputs[idx] = time_phase.cos();
 
         proprio_outputs
     }
 
     fn input_size(&self, params: &Params) -> usize {
-        // memory_size + energy + rotation(sin,cos) + position(sin_x, cos_x, sin_y, cos_y) + velocity(x,y)
+        // memory_size + energy + position(sin_x, cos_x, sin_y, cos_y) + vision_offset(sin, cos) + time(sin, cos)
         params.memory_size + 9
     }
 

@@ -33,8 +33,11 @@ pub struct Organism {
     pub pos: Array1<f32>,
     /// Velocity in 2D space.
     pub vel: Array1<f32>,
-    /// Rotation in radians.
+    /// Movement/orientation rotation in radians (direction of movement).
     pub rot: f32,
+    /// Vision rotation in radians (direction of vision/perception).
+    /// This is now relative to body rotation: `vision_rot` = rot + `neural_output_offset`
+    pub vision_rot: f32,
     /// Current energy (dies when <= 0).
     pub energy: f32,
     /// Signal output (RGB color visible to others).
@@ -61,6 +64,8 @@ pub struct Organism {
     pub reproduction_method: u8,
     /// Parent score(s) at time of birth (for tracking improvement)
     pub parent_avg_score: f64,
+    /// Total distance traveled by this organism
+    pub distance_traveled: f32,
 }
 
 impl Organism {
@@ -95,6 +100,8 @@ impl Organism {
 
         // Initialize vision angles evenly spread across FOV
         let mut vision_angles = Array1::zeros(num_vision_directions);
+        let mut vision_lengths = Array1::zeros(num_vision_directions);
+
         for i in 0..num_vision_directions {
             let angle_offset = if num_vision_directions > 1 {
                 (i as f32 / (num_vision_directions - 1) as f32 - 0.5) * fov
@@ -102,10 +109,13 @@ impl Organism {
                 0.0
             };
             vision_angles[i] = angle_offset;
-        }
 
-        // Initialize vision lengths: center vision is 2x longer than others
-        let vision_lengths = Array1::from_elem(num_vision_directions, max_vision);
+            // // Peripheral vision falloff: center rays are longest, edges are shorter
+            // // Use cosine falloff: rays at the edge (±fov/2) are 50% as long as center
+            // let normalized_angle = angle_offset / (fov / 2.0); // -1 to 1
+            // let falloff = (normalized_angle.abs().powi(2) * 0.5).clamp(0.0, 0.5); // 0 at center, 0.5 at edges
+            vision_lengths[i] = max_vision;
+        }
 
         // Create brain based on brain type
         let brain = match params.brain_type {
@@ -125,13 +135,16 @@ impl Organism {
             }
         };
 
+        let initial_rot = rand::random::<f32>() * std::f32::consts::PI * 2.;
+
         Self {
             id,
             age: 0.0,
             score: 0,
             pos: Array1::random(2, Uniform::new(0., 1.)) * screen_center * 2.0,
             vel: Array1::zeros(2),
-            rot: rand::random::<f32>() * std::f32::consts::PI * 2.,
+            rot: initial_rot,
+            vision_rot: initial_rot, // Start with vision aligned to movement
             energy: 1.0,
             signal: Array1::random(signal_size, Uniform::new(0.0, 1.0)),
             memory: Array1::zeros(memory_size),
@@ -145,6 +158,7 @@ impl Organism {
             birth_generation: 0,
             reproduction_method: 0, // random initialization
             parent_avg_score: 0.0,
+            distance_traveled: 0.0,
         }
     }
 
@@ -158,8 +172,8 @@ impl Organism {
     }
 
     /// Calculates fitness value for breeding selection.
-    /// Fitness combines survival time (age) and combat success (score).
-    /// This creates evolutionary pressure for both longevity and effectiveness.
+    /// Fitness combines survival time (age), combat success (score), and movement (distance).
+    /// This creates evolutionary pressure for longevity, effectiveness, and exploration.
     pub fn fitness(&self) -> f64 {
         // Age component: reward organisms that lived longer
         let age_fitness = self.age as f64;
@@ -167,16 +181,16 @@ impl Organism {
         // Score component: reward organisms that ate more food (or killed others)
         let score_fitness = self.score as f64;
 
-        // Combined fitness: weight age and score equally
-        // You can adjust these weights to prioritize survival vs combat
-        0.3 * age_fitness + score_fitness
+        // Distance component: reward organisms that moved around more
+        let distance_fitness = self.distance_traveled as f64;
+
+        // Combined fitness: weight all components
+        // Age: 0.1x, Score: 1.0x, Distance: 0.01x
+        // This prioritizes food consumption, with bonuses for survival and exploration
+        0.1 * age_fitness + score_fitness + 0.001 * distance_fitness
     }
 
     /// Calculates vision ray directions based on evolved vision parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `max_vision_length` - Maximum vision distance
     ///
     /// # Returns
     ///
@@ -186,7 +200,7 @@ impl Organism {
             .iter()
             .zip(self.vision_lengths.iter())
             .map(|(&angle, &length)| {
-                let angle_rad = self.rot + angle;
+                let angle_rad = self.vision_rot + angle;
                 Array1::from_vec(vec![angle_rad.cos() * length, angle_rad.sin() * length])
             })
             .collect()
@@ -265,8 +279,15 @@ impl Locatable for Organism {
     }
 
     fn update(&mut self, dt: f32) {
+        // Calculate distance moved this frame
+        let displacement = &self.vel * dt;
+        let distance_this_frame = displacement.mapv(|x| x.powi(2)).sum().sqrt();
+
         // Update position based on velocity
-        self.pos += &(&self.vel * dt);
+        self.pos += &displacement;
+
+        // Track total distance traveled
+        self.distance_traveled += distance_this_frame;
 
         // Update age and attack cooldown
         self.age += dt;

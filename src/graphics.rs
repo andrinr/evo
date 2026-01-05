@@ -123,7 +123,7 @@ pub fn draw_interactions(
                 end[0],
                 end[1],
                 2.0,
-                Color::from_rgba(0, 255, 255, 150),
+                Color::from_rgba(0, 155, 155, 255),
             );
         }
     }
@@ -172,11 +172,19 @@ pub fn draw_projectiles(
     state.projectiles.iter().for_each(|projectile| {
         let screen_pos = projectile.pos.to_screen(params, ui_panel_width);
         let scaled_radius = params.projectile_radius.to_screen(params, ui_panel_width);
+
+        // Map damage to alpha (transparency) to visualize projectile strength
+        // Damage ranges from 0 to attack_damage_rate (typically ~4.0)
+        // Map to alpha range 100-255 to keep projectiles visible
+        let max_damage = params.attack_damage_rate;
+        let normalized_damage = (projectile.damage / max_damage).clamp(0.0, 1.0);
+        let alpha = (100.0 + normalized_damage * 155.0) as u8;
+
         draw_circle(
             screen_pos[0],
             screen_pos[1],
             scaled_radius,
-            Color::from_rgba(0, 0, 0, 255),
+            Color::from_rgba(0, 0, 0, alpha),
         );
     });
 }
@@ -199,7 +207,7 @@ pub fn draw_organisms(
             screen_pos[1],
             scent_radius_screen,
             2.0,
-            Color::from_rgba(100, 100, 100, 30),
+            Color::from_rgba(100, 100, 100, 100),
         );
 
         // Draw scent radius (faint circle)
@@ -209,7 +217,7 @@ pub fn draw_organisms(
             screen_pos[1],
             share_radius_screen,
             2.0,
-            Color::from_rgba(100, 100, 100, 30),
+            Color::from_rgba(100, 100, 100, 100),
         );
 
         // Highlight selected organism with a bright outline
@@ -226,6 +234,19 @@ pub fn draw_organisms(
         // Draw organism body with pool color
         let pool_color = get_pool_color(entity.pool_id);
         draw_circle(screen_pos[0], screen_pos[1], screen_radius, pool_color);
+
+        // Draw movement axis indicator (direction of movement/orientation)
+        let movement_line_length = screen_radius * 2.0;
+        let movement_end_x = screen_pos[0] + entity.rot.cos() * movement_line_length;
+        let movement_end_y = screen_pos[1] + entity.rot.sin() * movement_line_length;
+        draw_line(
+            screen_pos[0],
+            screen_pos[1],
+            movement_end_x,
+            movement_end_y,
+            2.0,
+            Color::from_rgba(0, 0, 0, 180), // Dark line for movement direction
+        );
 
         // organism health bar (scaled)
         let health_bar_width = 20.0;
@@ -315,8 +336,8 @@ pub fn draw_organisms(
                 screen_pos[1],
                 end_point[0],
                 end_point[1],
-                1.0,
-                Color::from_rgba(0, 0, 0, 70), // Semi-transparent black for less visual clutter
+                3.0,
+                Color::from_rgba(0, 0, 0, 50), // Semi-transparent black for less visual clutter
             );
         }
     });

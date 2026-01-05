@@ -232,14 +232,14 @@ fn draw_signal_bars(ui: &mut egui::Ui, signal: &ndarray::Array1<f32>) {
 }
 
 pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<String> {
-    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal) + memory + energy + rotation + position + velocity
+    // Input structure: vision rays (distance+pool_match+is_organism for each direction) + scent (signal) + memory + energy + position + rotation_diff + time
     // vision: 3 * num_vision_directions
     // scent: signal_size
     // memory: memory_size
     // energy: 1
-    // rotation: 2 (sin, cos)
     // position: 4 (sin_x, cos_x, sin_y, cos_y)
-    // velocity: 2 (x, y)
+    // rotation_diff: 2 (sin, cos of vision_rot - rot)
+    // time: 2 (sin, cos of time phase)
 
     let vision_inputs = 3 * params.num_vision_directions;
     let scent_start = vision_inputs;
@@ -247,12 +247,12 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
     let memory_start = scent_end;
     let memory_end = memory_start + params.memory_size;
     let energy_idx = memory_end;
-    let rotation_start = energy_idx + 1;
-    let rotation_end = rotation_start + 2;
-    let position_start = rotation_end;
+    let position_start = energy_idx + 1;
     let position_end = position_start + 4;
-    let velocity_start = position_end;
-    let velocity_end = velocity_start + 2;
+    let rotation_diff_start = position_end;
+    let rotation_diff_end = rotation_diff_start + 2;
+    let time_start = rotation_diff_end;
+    let time_end = time_start + 2;
 
     if neuron_idx < vision_inputs {
         let direction = neuron_idx / 3;
@@ -272,13 +272,6 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
         Some(format!("Mem {}", mem_idx))
     } else if neuron_idx == energy_idx {
         Some("Energy".to_string())
-    } else if neuron_idx < rotation_end {
-        let offset = neuron_idx - rotation_start;
-        if offset == 0 {
-            Some("Rot Sin".to_string())
-        } else {
-            Some("Rot Cos".to_string())
-        }
     } else if neuron_idx < position_end {
         let offset = neuron_idx - position_start;
         match offset {
@@ -288,12 +281,19 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
             3 => Some("Pos Y Cos".to_string()),
             _ => None,
         }
-    } else if neuron_idx < velocity_end {
-        let offset = neuron_idx - velocity_start;
+    } else if neuron_idx < rotation_diff_end {
+        let offset = neuron_idx - rotation_diff_start;
         if offset == 0 {
-            Some("Vel X".to_string())
+            Some("VisOff Sin".to_string())
         } else {
-            Some("Vel Y".to_string())
+            Some("VisOff Cos".to_string())
+        }
+    } else if neuron_idx < time_end {
+        let offset = neuron_idx - time_start;
+        if offset == 0 {
+            Some("Time Sin".to_string())
+        } else {
+            Some("Time Cos".to_string())
         }
     } else {
         None
@@ -301,19 +301,21 @@ pub(super) fn get_input_label(neuron_idx: usize, params: &Params) -> Option<Stri
 }
 
 pub(super) fn get_output_label(neuron_idx: usize, params: &Params) -> Option<String> {
-    // Output structure: signal + memory + rotation + acceleration + attack + share
+    // Output structure: signal + memory + movement_rotation + vision_offset + velocity + attack + share
     // signal: signal_size
     // memory: memory_size
-    // rotation: 1
-    // acceleration: 1
+    // movement_rotation: 1
+    // vision_offset: 1 (relative to body rotation)
+    // velocity: 1
     // attack: 1
     // share: 1
 
     let signal_end = params.signal_size;
     let memory_end = signal_end + params.memory_size;
-    let rotation_idx = memory_end;
-    let accel_idx = rotation_idx + 1;
-    let attack_idx = accel_idx + 1;
+    let move_rot_idx = memory_end;
+    let vis_offset_idx = move_rot_idx + 1;
+    let velocity_idx = vis_offset_idx + 1;
+    let attack_idx = velocity_idx + 1;
     let share_idx = attack_idx + 1;
 
     if neuron_idx < signal_end {
@@ -321,10 +323,12 @@ pub(super) fn get_output_label(neuron_idx: usize, params: &Params) -> Option<Str
     } else if neuron_idx < memory_end {
         let mem_idx = neuron_idx - signal_end;
         Some(format!("Mem {}", mem_idx))
-    } else if neuron_idx == rotation_idx {
-        Some("Rotation".to_string())
-    } else if neuron_idx == accel_idx {
-        Some("Accel".to_string())
+    } else if neuron_idx == move_rot_idx {
+        Some("Move Rot".to_string())
+    } else if neuron_idx == vis_offset_idx {
+        Some("Vis Offset".to_string())
+    } else if neuron_idx == velocity_idx {
+        Some("Velocity".to_string())
     } else if neuron_idx == attack_idx {
         Some("Attack".to_string())
     } else if neuron_idx == share_idx {
@@ -371,6 +375,7 @@ fn draw_transformer_visualization(
         for i in 0..rows {
             for j in 0..cols {
                 let weight = weights[[i, j]];
+                // Apply tanh to squash weight values for visualization
                 let normalized = f32::midpoint(weight.tanh(), 1.0);
                 let color = inferno_colormap(normalized);
 
@@ -444,6 +449,7 @@ fn draw_transformer_visualization(
         for i in 0..rows {
             for j in 0..cols {
                 let weight = weights[[i, j]];
+                // Apply tanh to squash weight values for visualization
                 let normalized = f32::midpoint(weight.tanh(), 1.0);
                 let color = inferno_colormap(normalized);
 

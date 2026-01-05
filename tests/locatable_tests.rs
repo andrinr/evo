@@ -90,6 +90,7 @@ fn test_organism_locatable_update() {
         pos: Array1::from_vec(vec![10.0, 20.0]),
         vel: Array1::zeros(2),
         rot: 0.0,
+        vision_rot: 0.0,
         energy: 100.0,
         signal: Array1::zeros(3),
         memory: Array1::zeros(8),
@@ -103,6 +104,7 @@ fn test_organism_locatable_update() {
         birth_generation: 0,
         reproduction_method: 0,
         parent_avg_score: 0.0,
+        distance_traveled: 0.0,
     };
 
     // Test pos accessor

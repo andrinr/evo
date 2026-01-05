@@ -10,9 +10,9 @@ fn create_test_params() -> Params {
     let memory_size: usize = 8;
 
     let layer_sizes = vec![
-        3 * num_vision_directions + signal_size + memory_size + 9,
+        3 * num_vision_directions + signal_size + memory_size + 9, // +9 for energy, position(4), vision_offset(2), time(2)
         16,
-        signal_size + memory_size + 6,
+        signal_size + memory_size + 5,
     ];
 
     Params {
@@ -25,6 +25,7 @@ fn create_test_params() -> Params {
         idle_energy_rate: 0.01,
         move_energy_rate: 0.0001,
         move_multiplier: 50.0,
+        rot_multiplier: 10.0,
         rot_energy_rate: 0.00001,
         num_vision_directions,
         fov: std::f32::consts::PI / 2.0,
@@ -60,9 +61,13 @@ fn create_test_params() -> Params {
         graveyard_size: 100,
         reproduction_energy_multiplier: 1.2,
         reproduction_radius: 15.0,
-        spawn_from_graveyard: true,
         unbalanced_pool_sampling: false,
         empty_pool_seed_count: 5,
+        velocity_damping: 0.05,
+        elite_pool_size: 5,
+        elite_spawn_probability: 0.1,
+        num_spawn_clusters: 3,
+        cluster_radius: 100.0,
     }
 }
 
@@ -91,7 +96,7 @@ fn test_proprioception_sense_size() {
     let params = create_test_params();
     let proprio = Proprioception::new();
 
-    let expected_size = params.memory_size + 9; // memory + energy + rotation(2) + position(4) + velocity(2)
+    let expected_size = params.memory_size + 9; // memory + energy + position(4) + rotation_diff(2) + time(2)
     assert_eq!(proprio.input_size(&params), expected_size);
     assert_eq!(proprio.name(), "Proprioception");
 }
@@ -106,7 +111,7 @@ fn test_perception_combines_senses() {
     // Total size should be sum of all senses
     let expected_size = (params.num_vision_directions * 3) // vision
         + params.signal_size // scent
-        + (params.memory_size + 9); // proprioception
+        + (params.memory_size + 9); // proprioception (memory + energy + position(4) + rotation_diff(2) + time(2))
 
     assert_eq!(perception.total_input_size(&params), expected_size);
 
@@ -140,7 +145,7 @@ fn test_proprioception_reads_organism_state() {
     if let Some(organism) = ecosystem.organisms.first() {
         let outputs = proprio.sense(organism, &ecosystem, &params, None);
 
-        // Should have memory + energy + rotation(2) + position(4) + velocity(2)
+        // Should have memory + energy + position(4) + rotation_diff(2) + time(2)
         assert_eq!(outputs.len(), params.memory_size + 9);
 
         // Energy should be at memory_size index

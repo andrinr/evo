@@ -27,6 +27,8 @@ pub struct Params {
     pub move_energy_rate: f32,
     /// Movement speed multiplier.
     pub move_multiplier: f32,
+    /// Rotation speed multiplier (applies to both movement and vision rotation).
+    pub rot_multiplier: f32,
     /// Energy cost per unit of rotation.
     pub rot_energy_rate: f32,
     /// Number of vision rays per organism.
@@ -100,13 +102,26 @@ pub struct Params {
     /// Energy multiplier for offspring (offspring gets `parent_energy` * this factor).
     /// Default: 1.2 (20% bonus). Range: 0.5-3.0.
     pub reproduction_energy_multiplier: f32,
-    /// If true, spawn organisms from graveyard (evolution). If false, clone from living organisms.
-    /// Default: true (evolution-based spawning).
-    pub spawn_from_graveyard: bool,
     /// If true, sample organisms preferentially from the largest pool (competitive dynamics).
     /// If false, sample uniformly across all pools. Default: false (balanced pools).
     pub unbalanced_pool_sampling: bool,
     /// Number of organisms to seed into an empty pool from a non-empty pool.
     /// Default: 5. Range: 1-20.
     pub empty_pool_seed_count: usize,
+    /// Velocity damping factor applied each timestep (0.0 = no damping, 1.0 = full stop).
+    /// velocity *= (1.0 - damping). Default: 0.01. Range: 0.0-1.0.
+    pub velocity_damping: f32,
+    /// Number of top-scoring organisms to preserve in elite pool.
+    /// These organisms are kept alive in memory even after death and can be
+    /// used for breeding to preserve successful traits. Default: 5. Range: 0-20.
+    pub elite_pool_size: usize,
+    /// Probability of spawning from elite pool instead of graveyard/living organisms.
+    /// Default: 0.1 (10% chance). Range: 0.0-1.0.
+    pub elite_spawn_probability: f32,
+    /// Number of spatial clusters for food and organism spawning.
+    /// Resources will be concentrated in these clusters. Default: 3. Range: 1-10.
+    pub num_spawn_clusters: usize,
+    /// Radius of each spawn cluster (in simulation units).
+    /// Default: 100.0. Range: 50.0-300.0.
+    pub cluster_radius: f32,
 }

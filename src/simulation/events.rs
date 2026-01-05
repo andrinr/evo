@@ -165,22 +165,32 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 damage,
                 owner_id,
             } => {
-                // Apply damage to target
+                // Apply damage to target and check pool membership
                 let mut target_killed = false;
                 let mut target_pos = None;
+                let mut target_pool_id = None;
                 if let Some(org) = state.organisms.iter_mut().find(|o| o.id == target_id) {
+                    target_pool_id = Some(org.pool_id);
                     org.consume_energy(damage);
                     if !org.is_alive() {
                         target_killed = true;
                         target_pos = Some(org.pos.clone());
                     }
                 }
-                // Award point to attacker if target was killed
-                if target_killed
-                    && let Some(_attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
+
+                // Apply score changes to attacker based on whether they hit same pool
+                if let Some(attacker) = state.organisms.iter_mut().find(|o| o.id == owner_id)
+                    && let Some(target_pool) = target_pool_id
                 {
-                    // _attacker.score += 1;
+                    if attacker.pool_id == target_pool {
+                        // Penalty for hitting same pool (friendly fire)
+                        // attacker.score -= 1;
+                    } else if target_killed {
+                        // Reward for killing different pool
+                        attacker.score += 1;
+                    }
                 }
+
                 // Create corpse if organism was killed by projectile
                 if let Some(pos) = target_pos {
                     dead_organisms_combat.push((target_id, pos));
@@ -243,9 +253,10 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
 
     // Create corpses only from combat deaths (organisms killed by projectiles)
     // Natural deaths do not spawn corpses
-    for (organism_id, pos) in dead_organisms_combat {
+    // Corpses spawn at the location where the organism died
+    for (organism_id, death_pos) in dead_organisms_combat {
         let corpse = super::food::Food {
-            pos,
+            pos: death_pos,
             energy: params.corpse_energy_ratio,
             age: 0.0,
         };
@@ -292,37 +303,48 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
     }
 
     // Process asexual reproductions
-    for (parent_id, parent_pos, energy_contribution) in asexual_reproductions {
-        if let Some(parent) = state.organisms.iter_mut().find(|o| o.id == parent_id)
-            && parent.energy >= energy_contribution + 0.5
-        {
-            // Deduct energy from parent
-            parent.consume_energy(energy_contribution);
+    for (parent_id, _parent_pos, energy_contribution) in asexual_reproductions {
+        // Find parent and check energy (immutable borrow)
+        let parent_data = state
+            .organisms
+            .iter()
+            .find(|o| o.id == parent_id)
+            .filter(|o| o.energy >= energy_contribution + 0.5)
+            .map(|p| (p.brain.clone(), p.pool_id, p.score, p.dna.clone()));
+
+        if let Some((parent_brain, pool_id, parent_score, parent_dna)) = parent_data {
+            // Deduct energy from parent (mutable borrow 1)
+            if let Some(parent) = state.organisms.iter_mut().find(|o| o.id == parent_id) {
+                parent.consume_energy(energy_contribution);
+            }
+
+            // Spawn offspring in a cluster belonging to the parent's pool (mutable borrow 2, separate from above)
+            let spawn_pos = state.random_organism_cluster_position_for_pool(params, pool_id);
 
             // Create offspring using parent's brain with mutation
             let mut offspring = super::organism::Organism::new_random(
                 state.generation as usize,
-                &parent_pos,
+                &spawn_pos,
                 params.signal_size,
                 params.memory_size,
                 params.num_vision_directions,
                 params.vision_radius,
                 params.fov,
                 params.layer_sizes.clone(),
-                parent.pool_id,
+                pool_id,
                 params,
             );
 
             // Clone and mutate parent brain
-            offspring.brain = parent.brain.clone();
+            offspring.brain = parent_brain;
             offspring.brain.mutate(0.05); // Small mutation for asexual reproduction
 
             // Set offspring properties - offspring gets multiplied energy
             offspring.energy = energy_contribution * params.reproduction_energy_multiplier;
             offspring.birth_generation = state.generation;
             offspring.reproduction_method = 1; // asexual
-            offspring.parent_avg_score = parent.score as f64;
-            offspring.dna.clone_from(&parent.dna);
+            offspring.parent_avg_score = parent_score as f64;
+            offspring.dna = parent_dna;
             super::dna::mutate(&mut offspring.dna, params.dna_mutation_rate);
 
             state.generation += 1;
@@ -371,7 +393,7 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
     }
 
     // Execute sexual reproductions
-    for (parent1_id, parent2_id, energy1, energy2, pos) in sexual_reproductions {
+    for (parent1_id, parent2_id, energy1, energy2, _pos) in sexual_reproductions {
         // Find both parents
         let parent1_idx = state.organisms.iter().position(|o| o.id == parent1_id);
         let parent2_idx = state.organisms.iter().position(|o| o.id == parent2_id);
@@ -393,10 +415,14 @@ pub fn apply_events(state: &mut Ecosystem, params: &Params, mut queue: EventQueu
                 let total_energy = energy1 + energy2;
                 let weight1 = energy1 / total_energy;
 
+                // Spawn offspring in a cluster belonging to parent1's pool (not at parent position)
+                let spawn_pos =
+                    state.random_organism_cluster_position_for_pool(params, parent1.pool_id);
+
                 // Create offspring
                 let mut offspring = super::organism::Organism::new_random(
                     state.generation as usize,
-                    &pos,
+                    &spawn_pos,
                     params.signal_size,
                     params.memory_size,
                     params.num_vision_directions,
