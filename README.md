@@ -5,40 +5,38 @@
 
 ![UI](image-2.png)
 
-## Description
+## Overview
 
-A high-performance evolutionary simulation where organisms with neural network brains compete for survival. Organisms perceive their environment through vision, proprioception, and scent, then use their brains (MLPs or Transformers) to decide actions like movement, rotation, attacking, and energy sharing.
+A high-performance evolutionary simulation where organisms with neural network brains (MLPs or Transformers) compete for survival. Organisms perceive their environment through vision, scent, and proprioception, then decide actions like movement, attacking, and energy sharing.
 
 **Key Features:**
-- **Parallel simulation** using Rayon for multi-threaded organism updates
-- **Multiple reproduction strategies:** Asexual cloning, sexual crossover, and inter-pool breeding
-- **Genetic pools** for speciation and diversity
-- **Rich sensory perception:** Vision raycasting, proprioception, and scent detection
-- **Event-driven architecture** for thread-safe state updates
-- **Spatial indexing** with KD-trees for efficient neighbor queries
+- **Brain architectures:** MLP or Transformer networks with targeted mutation
+- **Parallel simulation:** Multi-threaded updates with Rayon, BLAS-accelerated matrix ops
+- **Evolution mechanisms:** Asexual/sexual reproduction, genetic pools, fitness-based selection
+- **Rich interactions:** Vision raycasting, projectile combat, energy sharing, reproduction
+- **Dynamic environment:** Drifting food and spawn clusters
+- **Real-time visualization:** Interactive UI with camera zoom, organism tracking, performance plots
 
-Evolution happens through selection pressure - successful organisms contribute their genes to future generations through fitness-based breeding from a graveyard of deceased organisms.
-
-**Inspiration:** Based on concepts from [this video](https://www.youtube.com/watch?v=RjweUYtpNq4)
-
-## Running the Code
-
-To run the code, you need to rust installed. You can install it from [rustup.rs](https://rustup.rs/).
-
-After installing Rust, you can run the code with the following command:
+## Quick Start
 
 ```bash
-cargo run
+# Install Rust from rustup.rs
+cargo run --release
 ```
 
-### Check everything before committing
-make all
+**Controls:**
+- Mouse wheel: Zoom in/out
+- Click organism: Select/deselect
+- Hover: View organism details
+- Ctrl+S/L: Save/load simulation
 
-### Just format
-make fmt
+## Development
 
-### Just lint  
-make clippy
+```bash
+make all      # Format, lint, test
+make fmt      # Format code
+make clippy   # Run linter
+make doc      # Generate documentation
+```
 
-### Generate docs
-make doc
+**Inspiration:** Based on concepts from [this video](https://www.youtube.com/watch?v=RjweUYtpNq4)
