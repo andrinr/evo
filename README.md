@@ -1,7 +1,7 @@
 # Evolutionary Neural Network Simulation
 
 > [!NOTE]
-> This project was developed with extensive use of agentic AI coding tools (Claude Code CLI).
+> This project was developed with extensive use of agentic AI coding tools with a clear priority of speed over quaility.
 
 ![UI](image-2.png)
 
